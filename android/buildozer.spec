@@ -9,7 +9,7 @@ version = 1.0.0
 
 requirements = python3,kivy,websocket-client,pillow
 
-orientation = sensor
+orientation = all
 fullscreen = 1
 android.permissions = INTERNET,ACCESS_NETWORK_STATE,ACCESS_WIFI_STATE
 android.api = 34
