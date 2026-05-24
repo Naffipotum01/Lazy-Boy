@@ -67,25 +67,57 @@ class DeviceBridge:
     def get_last_location(self):
         return self._last_location
 
-    # === USB Display Bridge ===
+    # === USB Bridge ===
     def enable_usb_tethering(self):
-        """Enable USB tethering for network bridge."""
+        """Enable USB tethering — phone shares internet TO PC."""
         try:
-            from jnius import autoclass, cast
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            ConnectivityManager = autoclass("android.net.ConnectivityManager")
-
-            context = PythonActivity.mActivity
-            cm = context.getSystemService(Context.CONNECTIVITY_SERVICE)
-
-            result = subprocess.run(
+            subprocess.run(
                 ["settings", "put", "global", "usb_tethering_enabled", "1"],
                 capture_output=True, timeout=5
             )
             self._usb_detected = True
-            return {"success": True}
+            return {"success": True, "method": "phone_to_pc"}
         except Exception as e:
             return {"success": False, "error": str(e)}
+
+    def request_pc_usb_sharing(self):
+        """Request PC to share internet back TO phone over USB.
+        The PC enables ICS (Internet Connection Sharing) on its USB/RNDIS
+        adapter so the phone gets internet access through the cable.
+        """
+        if self.client and self.client.connected:
+            self.client.send({
+                "type": "bridge_usb_share",
+                "direction": "pc_to_phone",
+            })
+            return {"success": True, "method": "requested"}
+        return {"success": False, "error": "Not connected"}
+
+    def enable_usb_reverse_tether(self):
+        """
+        Force the phone's USB network interface (rndis0/usb0) to
+        request an IP via DHCP so it receives internet from the PC.
+        Run this AFTER the PC has enabled ICS.
+        """
+        try:
+            result = subprocess.run(
+                ["netcfg", "usb0", "dhcp"],
+                capture_output=True, timeout=10
+            )
+            if result.returncode == 0:
+                return {"success": True, "method": "dhcp"}
+        except Exception:
+            pass
+        try:
+            result = subprocess.run(
+                ["dhcptool", "usb0"],
+                capture_output=True, timeout=10
+            )
+            if result.returncode == 0:
+                return {"success": True, "method": "dhcptool"}
+        except Exception:
+            pass
+        return {"success": False, "error": "Could not get DHCP on USB interface"}
 
     def check_usb_connection(self):
         """Detect if connected to PC via USB."""

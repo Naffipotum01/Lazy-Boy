@@ -76,7 +76,7 @@ class DeviceBridge:
                             interfaces.append({
                                 "interface": iface,
                                 "ip": ip,
-                                "type": "usb_tether",
+                                "type": "usb_tether_phone_to_pc",
                             })
                         elif ip.startswith("169.254."):
                             interfaces.append({
@@ -88,6 +88,118 @@ class DeviceBridge:
             pass
         return interfaces
 
+    def _find_usb_adapters(self):
+        """Find USB/RNDIS network adapters on Windows."""
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | "
+                 "Select-Object Name, InterfaceDescription, InterfaceIndex, Status | ConvertTo-Json"],
+                capture_output=True, text=True, timeout=15
+            )
+            import json
+            adapters = json.loads(result.stdout)
+            if isinstance(adapters, dict):
+                adapters = [adapters]
+
+            usb_adapters = []
+            for a in adapters:
+                desc = a.get("InterfaceDescription", "") + a.get("Name", "")
+                if any(kw in desc.lower() for kw in ["rndis", "usb", "remote ndis",
+                                                       "mobile", "ethernet"]):
+                    if not any(kw in desc.lower() for kw in ["virtual", "vmware",
+                                                              "virtualbox", "hyper-v"]):
+                        usb_adapters.append(a)
+            return usb_adapters
+        except Exception:
+            return []
+
+    def share_pc_internet_via_usb(self):
+        """
+        Share PC's internet to the phone via USB connection.
+        Enables Internet Connection Sharing (ICS) on Windows.
+        """
+        try:
+            usb_adapters = self._find_usb_adapters()
+            if not usb_adapters:
+                return {"success": False, "error": "No USB adapter found. Is phone connected with tethering enabled?"}
+
+            usb_iface = usb_adapters[0]["InterfaceIndex"]
+
+            ps = f"""
+            $usbIdx = {usb_iface}
+            $usbAdapter = Get-NetAdapter -InterfaceIndex $usbIdx
+
+            $internetAdapter = Get-NetAdapter | Where-Object {{
+                $_.Status -eq 'Up' -and
+                $_.InterfaceIndex -ne $usbIdx -and
+                $_.InterfaceDescription -notmatch 'Virtual|Hyper-V|Bluetooth|Loopback'
+            }} | Select-Object -First 1
+
+            if (-not $internetAdapter) {{
+                Write-Output "No internet adapter found"
+                exit 1
+            }}
+
+            $netShare = New-Object -ComObject HNetCfg.HNetShare
+            $connections = $netShare.EnumEveryConnection
+            $internetConn = $null
+            $usbConn = $null
+
+            foreach ($conn in $connections) {{
+                $props = $netShare.NetConnectionProps($conn)
+                if ($props.Name -eq $internetAdapter.Name) {{
+                    $internetConn = $conn
+                }}
+                if ($props.Name -eq $usbAdapter.Name) {{
+                    $usbConn = $conn
+                }}
+            }}
+
+            if ($internetConn -and $usbConn) {{
+                $internetConfig = $netShare.INetSharingConfigurationForINetConnection($internetConn)
+                $internetConfig.EnableSharing(0)
+                $usbConfig = $netShare.INetSharingConfigurationForINetConnection($usbConn)
+                $usbConfig.EnableSharing(1)
+                Write-Output "ICS enabled: PC internet -> USB phone"
+            }} else {{
+                Write-Output "Could not find connections for ICS"
+                exit 1
+            }}
+            """
+
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps],
+                capture_output=True, text=True, timeout=30
+            )
+            if result.returncode == 0:
+                return {"success": True, "info": result.stdout.strip()}
+            else:
+                return {"success": False, "error": result.stderr.strip() or result.stdout.strip()}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def stop_pc_usb_sharing(self):
+        """Disable ICS on the USB connection."""
+        try:
+            ps = """
+            $netShare = New-Object -ComObject HNetCfg.HNetShare
+            $connections = $netShare.EnumEveryConnection
+            foreach ($conn in $connections) {
+                $config = $netShare.INetSharingConfigurationForINetConnection($conn)
+                if ($config.SharingEnabled) {
+                    $config.DisableSharing()
+                }
+            }
+            Write-Output "ICS disabled on all connections"
+            """
+            subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps],
+                capture_output=True, timeout=30
+            )
+        except Exception:
+            pass
+
     def setup_adb_reverse(self):
         """Try ADB reverse port forwarding for USB WebSocket tunnel."""
         try:
@@ -96,6 +208,17 @@ class DeviceBridge:
                 capture_output=True, timeout=10
             )
             return {"success": True, "method": "adb_reverse"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def setup_adb_forward(self):
+        """Forward phone port to PC via ADB (for headless display)."""
+        try:
+            subprocess.run(
+                ["adb", "forward", "tcp:8765", "tcp:8765"],
+                capture_output=True, timeout=10
+            )
+            return {"success": True, "method": "adb_forward"}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

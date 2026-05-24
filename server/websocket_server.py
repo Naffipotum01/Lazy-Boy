@@ -398,11 +398,20 @@ class ControlServer:
             self.bridge.stop_pc_hotspot()
 
         elif cmd == "bridge_usb_share":
-            result = self.bridge.share_wifi_to_pc()
-            self._send_to_phone({
-                "type": "bridge_network_status",
-                **result,
-            })
+            direction = data.get("direction", "phone_to_pc")
+            if direction == "pc_to_phone":
+                result = self.bridge.share_pc_internet_via_usb()
+                self._send_to_phone({
+                    "type": "bridge_usb_share_result",
+                    "direction": "pc_to_phone",
+                    **result,
+                })
+            else:
+                result = self.bridge.share_wifi_to_pc()
+                self._send_to_phone({
+                    "type": "bridge_network_status",
+                    **result,
+                })
 
         elif cmd == "bridge_status":
             status = self.bridge.get_bridge_status()

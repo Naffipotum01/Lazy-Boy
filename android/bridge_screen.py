@@ -62,12 +62,20 @@ class BridgeScreen(Screen):
         content.add_widget(self.usb_status)
 
         usb_btn = Button(
-            text="Enable USB Tethering (share internet)",
+            text="Phone→PC: Share phone internet to PC",
             size_hint_y=None, height=dp(44),
-            background_color=(0.3, 0.5, 0.3, 1), font_size=13
+            background_color=(0.3, 0.5, 0.3, 1), font_size=12
         )
         usb_btn.bind(on_press=lambda b: self._run_bridge("usb_tether"))
         content.add_widget(usb_btn)
+
+        pc_usb_btn = Button(
+            text="PC→Phone: Get PC internet over USB",
+            size_hint_y=None, height=dp(44),
+            background_color=(0.3, 0.5, 0.7, 1), font_size=12
+        )
+        pc_usb_btn.bind(on_press=lambda b: self._run_bridge("pc_usb_share"))
+        content.add_widget(pc_usb_btn)
 
         headless_btn = Button(
             text="Headless Display Mode (USB)",
@@ -172,7 +180,14 @@ class BridgeScreen(Screen):
 
         if action == "usb_tether":
             result = self.bridge.enable_usb_tethering()
-            self.status_label.text = "USB tethering: " + ("OK" if result.get("success") else "Failed")
+            self.status_label.text = "Phone→PC tether: " + ("OK" if result.get("success") else "Failed")
+        elif action == "pc_usb_share":
+            result = self.bridge.request_pc_usb_sharing()
+            if result.get("success"):
+                self.status_label.text = "Requested PC internet over USB..."
+                Clock.schedule_once(lambda dt: self._try_usb_dhcp(), 3)
+            else:
+                self.status_label.text = "Not connected to PC server"
         elif action == "phone_hotspot":
             result = self.bridge.share_phone_wifi()
             self.status_label.text = "Hotspot: " + ("Started" if result.get("success") else "Failed")
@@ -181,6 +196,18 @@ class BridgeScreen(Screen):
             result = self.bridge.connect_to_pc_hotspot()
             self.status_label.text = "Connecting to PC hotspot..."
         Clock.schedule_once(lambda dt: self._check_usb(), 2)
+
+    def _try_usb_dhcp(self):
+        if self.bridge:
+            result = self.bridge.enable_usb_reverse_tether()
+            if result.get("success"):
+                self.status_label.text = "USB internet from PC: active"
+            else:
+                ip = self.bridge.get_usb_ip()
+                if ip:
+                    self.status_label.text = f"USB IP: {ip} — internet should work"
+                else:
+                    self.status_label.text = "DHCP failed. Try enabling USB tether on phone first"
 
     def _list_sensors(self, *args):
         if not self.bridge:
