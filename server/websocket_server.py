@@ -7,6 +7,7 @@ from screen_capture import ScreenCapture
 from input_handler import InputHandler
 from approval import ApprovalDialog
 from clipboard_sync import ClipboardSync
+from tablet_mode import set_tablet_mode, is_tablet_mode
 
 WS_PORT = 8765
 FS_PORT = 8766
@@ -24,6 +25,7 @@ class ControlServer:
         self._file_server = None
 
         self.clipboard = ClipboardSync(on_change_callback=self._on_clipboard_change)
+        self._tablet_was_on = None
 
     async def _handler(self, websocket):
         addr = websocket.remote_address
@@ -49,8 +51,15 @@ class ControlServer:
                 print(f"[-] Approval error: {e}")
                 return
 
+        was_empty = len(self.connected) == 0
         self.connected.add(websocket)
         print(f"[+] Approved: {ip}")
+
+        if was_empty:
+            self._tablet_was_on = is_tablet_mode()
+            if not self._tablet_was_on:
+                print("[*] Enabling tablet mode")
+                set_tablet_mode(True)
 
         sender_task = asyncio.ensure_future(self._send_frames(websocket))
 
@@ -67,6 +76,11 @@ class ControlServer:
             sender_task.cancel()
             self.connected.discard(websocket)
             print(f"[-] Disconnected: {ip}")
+            if len(self.connected) == 0 and self._tablet_was_on is not None:
+                if not self._tablet_was_on:
+                    print("[*] Restoring desktop mode")
+                    set_tablet_mode(False)
+                self._tablet_was_on = None
 
     async def _send_frames(self, websocket):
         try:
