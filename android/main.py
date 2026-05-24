@@ -108,6 +108,13 @@ class ControlScreen(Screen):
         self._last_touch_pos = None
         self._touch_start = None
         self._is_dragging = False
+        self._second_touch = None
+        self._two_finger_tap = False
+        self._move_sensitivity = 1.8
+        self._smoothing = 0.4
+        self._smoothed_dx = 0
+        self._smoothed_dy = 0
+        self._move_threshold = 1
 
         self.layout = FloatLayout()
 
@@ -136,27 +143,17 @@ class ControlScreen(Screen):
         bottom_bar = BoxLayout(size_hint_y=0.1, pos_hint={"y": 0},
                                 padding=[10, 5], spacing=10)
 
-        keyboard_btn = Button(text="Keyboard", size_hint_x=0.3,
+        keyboard_btn = Button(text="Keyboard", size_hint_x=0.35,
                                background_color=(0.3, 0.3, 0.8, 1))
         keyboard_btn.bind(on_press=self._show_keyboard)
         bottom_bar.add_widget(keyboard_btn)
 
-        left_click = Button(text="Left Click", size_hint_x=0.25,
-                             background_color=(0.2, 0.6, 0.2, 1))
-        left_click.bind(on_press=lambda b: self._send_click("left"))
-        bottom_bar.add_widget(left_click)
-
-        right_click = Button(text="Right Click", size_hint_x=0.25,
-                              background_color=(0.6, 0.4, 0.2, 1))
-        right_click.bind(on_press=lambda b: self._send_click("right"))
-        bottom_bar.add_widget(right_click)
-
-        scroll_up = Button(text="^", size_hint_x=0.1,
+        scroll_up = Button(text="Scroll ^", size_hint_x=0.2,
                             background_color=(0.4, 0.4, 0.4, 1))
         scroll_up.bind(on_press=lambda b: self._send_scroll(3))
         bottom_bar.add_widget(scroll_up)
 
-        scroll_down = Button(text="v", size_hint_x=0.1,
+        scroll_down = Button(text="Scroll v", size_hint_x=0.2,
                               background_color=(0.4, 0.4, 0.4, 1))
         scroll_down.bind(on_press=lambda b: self._send_scroll(-3))
         bottom_bar.add_widget(scroll_down)
@@ -233,32 +230,61 @@ class ControlScreen(Screen):
             return (int(rel_x * tex_w), int(rel_y * tex_h))
         return None
 
+    def _is_in_control_area(self, touch):
+        if touch.y < self.layout.height * 0.1:
+            return False
+        if touch.y > self.layout.height * 0.92:
+            return False
+        return True
+
     def on_touch_down(self, touch):
         if not self.client or not self.client.connected:
             return super().on_touch_down(touch)
 
-        if touch.y < self.layout.height * 0.1 or touch.y > self.layout.height * 0.92:
+        if not self._is_in_control_area(touch):
             return super().on_touch_down(touch)
+
+        if touch.is_mouse_scrolling:
+            if touch.button == "scrolldown":
+                self._send_scroll(-3)
+            elif touch.button == "scrollup":
+                self._send_scroll(3)
+            return True
+
+        if self._last_touch_pos is not None:
+            self._second_touch = touch
+            self._two_finger_tap = True
+            touch.grab(self)
+            return True
 
         coords = self._get_screen_coords(touch.x, touch.y)
         if coords:
             self._last_touch_pos = (touch.x, touch.y)
             self._touch_start = (touch.x, touch.y)
             self._is_dragging = False
+            self._two_finger_tap = False
+            self._smoothed_dx = 0
+            self._smoothed_dy = 0
             touch.grab(self)
         return True
 
     def on_touch_move(self, touch):
         if touch.grab_current is self:
-            if self._last_touch_pos:
+            if self._second_touch is touch:
+                return True
+
+            if self._last_touch_pos and self._second_touch is None:
                 dx = touch.x - self._last_touch_pos[0]
                 dy = touch.y - self._last_touch_pos[1]
 
-                if abs(dx) > 2 or abs(dy) > 2:
+                if abs(dx) > self._move_threshold or abs(dy) > self._move_threshold:
                     self._is_dragging = True
-                    screen_dx = int(dx * 2)
-                    screen_dy = int(dy * 2)
-                    self.client.send_mouse_move_relative(screen_dx, screen_dy)
+                    self._smoothed_dx = self._smoothed_dx * (1 - self._smoothing) + dx * self._smoothing
+                    self._smoothed_dy = self._smoothed_dy * (1 - self._smoothing) + dy * self._smoothing
+                    screen_dx = int(self._smoothed_dx * self._move_sensitivity)
+                    screen_dy = int(-self._smoothed_dy * self._move_sensitivity)
+                    if abs(screen_dx) >= 1 or abs(screen_dy) >= 1:
+                        self.client.send_mouse_move_relative(screen_dx, screen_dy)
 
             self._last_touch_pos = (touch.x, touch.y)
             return True
@@ -268,6 +294,22 @@ class ControlScreen(Screen):
         if touch.grab_current is self:
             touch.ungrab(self)
 
+            if self._second_touch is touch:
+                self._second_touch = None
+                return True
+
+            if self._second_touch is not None:
+                if self._two_finger_tap and not self._is_dragging:
+                    coords = self._get_screen_coords(touch.x, touch.y)
+                    if coords:
+                        self.client.send_mouse_click(coords[0], coords[1], "right")
+                self._second_touch = None
+                self._last_touch_pos = None
+                self._touch_start = None
+                self._is_dragging = False
+                self._two_finger_tap = False
+                return True
+
             if not self._is_dragging and self._touch_start:
                 coords = self._get_screen_coords(touch.x, touch.y)
                 if coords:
@@ -276,6 +318,8 @@ class ControlScreen(Screen):
             self._last_touch_pos = None
             self._touch_start = None
             self._is_dragging = False
+            self._smoothed_dx = 0
+            self._smoothed_dy = 0
             return True
         return super().on_touch_up(touch)
 
