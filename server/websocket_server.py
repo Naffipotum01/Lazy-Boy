@@ -15,6 +15,7 @@ from camera_stream import PcCameraStreamer
 from phone_camera_viewer import PhoneCameraViewer
 from device_bridge import DeviceBridge
 from radio_bridge import PcRadioTuner
+from click_predictor import ClickPredictor
 
 WS_PORT = 8765
 FS_PORT = 8766
@@ -46,6 +47,8 @@ class ControlServer:
         self.radio = PcRadioTuner()
         self.radio.set_send_callback(self._on_radio_audio)
         self._radio_playing = False
+        self.predictor = ClickPredictor()
+        self._smart_point_active = False
 
     async def _handler(self, websocket):
         addr = websocket.remote_address
@@ -476,6 +479,58 @@ class ControlServer:
                 "type": "radio_station_list",
                 "stations": stations,
             })
+
+        # === Smart Point ===
+        elif cmd == "smart_point_activate":
+            self._smart_point_active = True
+            result = self._do_smart_scan()
+            self._send_to_phone({"type": "smart_point_result", "predictions": result})
+
+        elif cmd == "smart_point_scan":
+            result = self._do_smart_scan()
+            self._send_to_phone({"type": "smart_point_result", "predictions": result})
+
+        elif cmd == "smart_point_click":
+            x = data.get("x", 0)
+            y = data.get("y", 0)
+            if self._smart_point_active:
+                orig_w = self.screen._orig_w if hasattr(self.screen, "_orig_w") else 1920
+                orig_h = self.screen._orig_h if hasattr(self.screen, "_orig_h") else 1080
+                scale = self.screen.scale
+                real_x = int(x / scale) if scale > 0 else x
+                real_y = int(y / scale) if scale > 0 else y
+                self.input.mouse_move(real_x, real_y)
+                self.input.mouse_click(real_x, real_y)
+            self._smart_point_active = False
+            self.screen.overlay_fn = None
+            self._send_to_phone({"type": "smart_point_dismissed"})
+
+        elif cmd == "smart_point_dismiss":
+            self._smart_point_active = False
+            self.screen.overlay_fn = None
+            self._send_to_phone({"type": "smart_point_dismissed"})
+
+    def _do_smart_scan(self):
+        try:
+            frame = self.screen.get_frame()
+            if not frame:
+                return []
+            from PIL import Image
+            import io
+            pil = Image.open(io.BytesIO(frame))
+
+            orig_w, orig_h = pil.size
+            orig_w = int(orig_w / self.screen.scale) if self.screen.scale > 0 else orig_w
+            orig_h = int(orig_h / self.screen.scale) if self.screen.scale > 0 else orig_h
+            self.screen._orig_w = orig_w
+            self.screen._orig_h = orig_h
+
+            predictions = self.predictor.predict(pil)
+            self.screen.overlay_fn = lambda img: self.predictor.render_overlay(img, predictions)
+            return predictions
+        except Exception as e:
+            print(f"[!] Smart scan error: {e}")
+            return []
 
     def _list_files(self, path):
         import os

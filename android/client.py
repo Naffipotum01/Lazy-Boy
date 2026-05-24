@@ -34,6 +34,7 @@ class ControlClient:
         self._radio_status_callback = None
         self._radio_audio_callback = None
         self._radio_phone_fm_callback = None
+        self._smart_point_callback = None
 
     def set_frame_callback(self, callback):
         self._frame_callback = callback
@@ -78,6 +79,9 @@ class ControlClient:
         self._radio_phone_fm_callback = callback
         self._voice_options_callback = callback
         self._phone_volume_callback = callback
+
+    def set_smart_point_callback(self, callback):
+        self._smart_point_callback = callback
 
     def connect(self, ip):
         if self.connected:
@@ -192,6 +196,14 @@ class ControlClient:
             elif msg_type == "radio_phone_fm_start":
                 if self._radio_phone_fm_callback:
                     self._radio_phone_fm_callback(data.get("freq", 88.0))
+
+            elif msg_type == "smart_point_result":
+                if self._smart_point_callback:
+                    self._smart_point_callback(data.get("predictions", []))
+
+            elif msg_type == "smart_point_dismissed":
+                if self._smart_point_callback:
+                    self._smart_point_callback([])
 
         except Exception:
             pass

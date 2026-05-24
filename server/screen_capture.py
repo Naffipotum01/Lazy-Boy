@@ -13,6 +13,10 @@ class ScreenCapture:
         self._frame = None
         self._lock = threading.Lock()
         self._thread = None
+        self.overlay_fn = None
+
+    def set_overlay_fn(self, fn):
+        self.overlay_fn = fn
 
     def _capture_loop(self):
         sct = mss.mss()
@@ -24,6 +28,11 @@ class ScreenCapture:
                 if self.scale < 1.0:
                     new_size = (int(img.width * self.scale), int(img.height * self.scale))
                     img = img.resize(new_size, Image.LANCZOS)
+                if self.overlay_fn:
+                    try:
+                        img = self.overlay_fn(img)
+                    except Exception:
+                        pass
                 buf = io.BytesIO()
                 img.save(buf, format="JPEG", quality=self.quality, optimize=True)
                 with self._lock:

@@ -33,6 +33,7 @@ from bridge_screen import BridgeScreen
 from device_bridge import DeviceBridge
 from radio_screen import RadioScreen
 from phone_radio import PhoneRadio
+from smart_pointer import SmartPointerOverlay
 
 SWIPE_THRESHOLD = 60
 SWIPE_VELOCITY = 250
@@ -740,6 +741,12 @@ class ControlScreen(Screen):
         settings_btn.bind(on_press=self._open_settings)
         top_bar.add_widget(settings_btn)
 
+        self.smart_btn = Button(text="Smart", size_hint_x=0.1,
+                                background_color=(0.3, 0.3, 0.3, 1),
+                                font_size=9)
+        self.smart_btn.bind(on_press=self._toggle_smart_point)
+        top_bar.add_widget(self.smart_btn)
+
         self.host_btn = Button(text="Host", size_hint_x=0.1,
                                background_color=(0.3, 0.3, 0.3, 1),
                                font_size=11)
@@ -758,6 +765,10 @@ class ControlScreen(Screen):
         self._host_capture_event = None
         self.voice = VoiceController(app=None, client=None)
         self.device_bridge = DeviceBridge()
+        self.smart_point = SmartPointerOverlay()
+        self.smart_point.opacity = 0
+        self.smart_point.client = None
+        self.layout.add_widget(self.smart_point)
 
         self.mode_hint = Label(
             text="[b]TOUCH MODE[/b]  |  Tap = click  |  Swipe = scroll/switch",
@@ -1572,6 +1583,26 @@ class LazyBoyApp(App):
         if self.manager and hasattr(self.manager, "get_screen"):
             rs = self.manager.get_screen("radio")
             rs.status_label.text = f"Phone FM tuning: {freq} MHz"
+
+    def _toggle_smart_point(self, *args):
+        if not self.client or not self.client.connected:
+            return
+        if self.smart_point._active:
+            self.smart_point.dismiss()
+            self.smart_btn.background_color = (0.3, 0.3, 0.3, 1)
+            self.client.send({"type": "smart_point_dismiss"})
+        else:
+            self.smart_point.client = self.client
+            self.client.set_smart_point_callback(self._on_smart_point)
+            self.smart_btn.background_color = (0.6, 0.2, 0.6, 1)
+            self.client.send({"type": "smart_point_activate"})
+
+    def _on_smart_point(self, predictions):
+        if predictions:
+            self.smart_point.show(predictions)
+        else:
+            self.smart_point.dismiss()
+            self.smart_btn.background_color = (0.3, 0.3, 0.3, 1)
 
     def on_stop(self):
         self.client.disconnect()
