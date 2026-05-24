@@ -13,13 +13,21 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.clock import Clock
-from kivy.graphics import Color, Rectangle
+from kivy.graphics import Color, Rectangle, Line
 from kivy.core.image import Image as CoreImage
 from kivy.core.window import Window
+from kivy.metrics import dp
 from io import BytesIO
+import time
 
 from discovery import NetworkDiscovery
 from client import ControlClient
+
+SWIPE_THRESHOLD = 80
+SWIPE_VELOCITY = 300
+TAP_TIMEOUT = 0.3
+DOUBLE_TAP_TIMEOUT = 0.35
+LONG_PRESS_TIMEOUT = 0.5
 
 
 class DiscoveryScreen(Screen):
@@ -32,7 +40,7 @@ class DiscoveryScreen(Screen):
         layout = BoxLayout(orientation="vertical", padding=20, spacing=10)
 
         header = BoxLayout(size_hint_y=0.12)
-        title = Label(text="Lazy Boy", font_size=32, bold=True,
+        title = Label(text="Lazy Boy Remote", font_size=32, bold=True,
                        color=(0.2, 0.8, 0.4, 1))
         header.add_widget(title)
         layout.add_widget(header)
@@ -100,17 +108,29 @@ class DiscoveryScreen(Screen):
 
 
 class ControlScreen(Screen):
+    MODE_TOUCH = "touch"
+    MODE_POINTER = "pointer"
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.client = None
         self.app_ref = None
         self._texture = None
-        self._last_touch_pos = None
-        self._touch_start = None
+        self.mode = self.MODE_TOUCH
+
+        self._touch1_start = None
+        self._touch1_pos = None
+        self._touch1_time = 0
+        self._touch1_grabbed = False
+        self._touch2_start = None
+        self._touch2_pos = None
+        self._touch2_grabbed = False
         self._is_dragging = False
-        self._second_touch = None
-        self._two_finger_tap = False
+        self._last_tap_time = 0
+        self._last_tap_pos = None
+
         self._move_sensitivity = 1.8
+        self._pointer_sensitivity = 2.5
         self._smoothing = 0.4
         self._smoothed_dx = 0
         self._smoothed_dy = 0
@@ -125,42 +145,66 @@ class ControlScreen(Screen):
         self.layout.add_widget(self.screen_image)
 
         top_bar = BoxLayout(size_hint_y=0.08, pos_hint={"top": 1},
-                             padding=[10, 5], spacing=10)
+                             padding=[6, 4], spacing=6)
+
+        self.touch_btn = Button(
+            text="Touch", size_hint_x=0.16,
+            background_color=(0.2, 0.7, 0.3, 1),
+            font_size=13, bold=True
+        )
+        self.touch_btn.bind(on_press=lambda b: self._set_mode(self.MODE_TOUCH))
+        top_bar.add_widget(self.touch_btn)
+
+        self.pointer_btn = Button(
+            text="Pointer", size_hint_x=0.16,
+            background_color=(0.3, 0.3, 0.3, 1),
+            font_size=13
+        )
+        self.pointer_btn.bind(on_press=lambda b: self._set_mode(self.MODE_POINTER))
+        top_bar.add_widget(self.pointer_btn)
 
         self.status_label = Label(text="Connecting...",
-                                   font_size=14, halign="left",
-                                   size_hint_x=0.6)
+                                   font_size=12, halign="center",
+                                   size_hint_x=0.28)
         self.status_label.bind(size=self.status_label.setter("text_size"))
         top_bar.add_widget(self.status_label)
 
-        disconnect_btn = Button(text="Disconnect", size_hint_x=0.2,
-                                 background_color=(0.8, 0.2, 0.2, 1))
+        keyboard_btn = Button(text="KB", size_hint_x=0.1,
+                               background_color=(0.3, 0.3, 0.8, 1),
+                               font_size=14, bold=True)
+        keyboard_btn.bind(on_press=self._show_keyboard)
+        top_bar.add_widget(keyboard_btn)
+
+        disconnect_btn = Button(text="X", size_hint_x=0.1,
+                                 background_color=(0.7, 0.2, 0.2, 1),
+                                 font_size=16, bold=True)
         disconnect_btn.bind(on_press=self._disconnect)
         top_bar.add_widget(disconnect_btn)
 
         self.layout.add_widget(top_bar)
 
-        bottom_bar = BoxLayout(size_hint_y=0.1, pos_hint={"y": 0},
-                                padding=[10, 5], spacing=10)
-
-        keyboard_btn = Button(text="Keyboard", size_hint_x=0.35,
-                               background_color=(0.3, 0.3, 0.8, 1))
-        keyboard_btn.bind(on_press=self._show_keyboard)
-        bottom_bar.add_widget(keyboard_btn)
-
-        scroll_up = Button(text="Scroll ^", size_hint_x=0.2,
-                            background_color=(0.4, 0.4, 0.4, 1))
-        scroll_up.bind(on_press=lambda b: self._send_scroll(3))
-        bottom_bar.add_widget(scroll_up)
-
-        scroll_down = Button(text="Scroll v", size_hint_x=0.2,
-                              background_color=(0.4, 0.4, 0.4, 1))
-        scroll_down.bind(on_press=lambda b: self._send_scroll(-3))
-        bottom_bar.add_widget(scroll_down)
-
-        self.layout.add_widget(bottom_bar)
+        self.mode_label = Label(
+            text="[b]TOUCH MODE[/b]\nTap to click | Drag to move\nSwipe to scroll/switch apps",
+            markup=True, font_size=14, halign="center",
+            size_hint=(0.6, 0.08),
+            pos_hint={"center_x": 0.5, "y": 0.02},
+            color=(1, 1, 1, 0.7)
+        )
+        self.mode_label.bind(size=self.mode_label.setter("text_size"))
+        self.layout.add_widget(self.mode_label)
 
         self.add_widget(self.layout)
+
+    def _set_mode(self, mode):
+        self.mode = mode
+        if mode == self.MODE_TOUCH:
+            self.touch_btn.background_color = (0.2, 0.7, 0.3, 1)
+            self.pointer_btn.background_color = (0.3, 0.3, 0.3, 1)
+            self.mode_label.text = "[b]TOUCH MODE[/b]\nTap to click | Drag to move\nSwipe to scroll/switch apps"
+        else:
+            self.touch_btn.background_color = (0.3, 0.3, 0.3, 1)
+            self.pointer_btn.background_color = (0.2, 0.5, 0.9, 1)
+            self.mode_label.text = "[b]POINTER MODE[/b]\nFinger = trackpad | Tap = click\nDouble-tap = right click"
 
     def on_enter(self):
         if self.client and self.client.connected:
@@ -185,16 +229,16 @@ class ControlScreen(Screen):
                 self.status_label.text = "Connected"
                 self.status_label.color = (0.2, 0.8, 0.4, 1)
             elif status == "waiting_approval":
-                self.status_label.text = "Waiting for PC approval..."
+                self.status_label.text = "Waiting..."
                 self.status_label.color = (1, 0.8, 0.2, 1)
             elif status == "denied":
-                self.status_label.text = "Connection denied"
+                self.status_label.text = "Denied"
                 self.status_label.color = (0.8, 0.2, 0.2, 1)
             elif status == "disconnected":
                 self.status_label.text = "Disconnected"
                 self.status_label.color = (0.6, 0.6, 0.6, 1)
             elif status.startswith("error"):
-                self.status_label.text = status
+                self.status_label.text = "Error"
                 self.status_label.color = (0.8, 0.2, 0.2, 1)
             else:
                 self.status_label.text = status
@@ -231,7 +275,7 @@ class ControlScreen(Screen):
         return None
 
     def _is_in_control_area(self, touch):
-        if touch.y < self.layout.height * 0.1:
+        if touch.y < self.layout.height * 0.04:
             return False
         if touch.y > self.layout.height * 0.92:
             return False
@@ -251,18 +295,22 @@ class ControlScreen(Screen):
                 self._send_scroll(3)
             return True
 
-        if self._last_touch_pos is not None:
-            self._second_touch = touch
-            self._two_finger_tap = True
+        now = time.time()
+
+        if self._touch1_grabbed and not self._touch2_grabbed:
+            self._touch2_start = (touch.x, touch.y)
+            self._touch2_pos = (touch.x, touch.y)
+            self._touch2_grabbed = True
+            self._touch2_time = now
             touch.grab(self)
             return True
 
-        coords = self._get_screen_coords(touch.x, touch.y)
-        if coords:
-            self._last_touch_pos = (touch.x, touch.y)
-            self._touch_start = (touch.x, touch.y)
+        if not self._touch1_grabbed:
+            self._touch1_start = (touch.x, touch.y)
+            self._touch1_pos = (touch.x, touch.y)
+            self._touch1_time = now
+            self._touch1_grabbed = True
             self._is_dragging = False
-            self._two_finger_tap = False
             self._smoothed_dx = 0
             self._smoothed_dy = 0
             touch.grab(self)
@@ -270,62 +318,133 @@ class ControlScreen(Screen):
 
     def on_touch_move(self, touch):
         if touch.grab_current is self:
-            if self._second_touch is touch:
+            now = time.time()
+
+            if self._touch2_grabbed and touch is not None:
+                if self._touch1_grabbed:
+                    if self._touch1_pos and self._touch2_pos:
+                        pass
+                if self._touch2_start:
+                    t2dx = touch.x - self._touch2_start[0]
+                    t2dy = touch.y - self._touch2_start[1]
+                    if abs(t2dx) > 15 or abs(t2dy) > 15:
+                        self._touch2_pos = (touch.x, touch.y)
                 return True
 
-            if self._last_touch_pos and self._second_touch is None:
-                dx = touch.x - self._last_touch_pos[0]
-                dy = touch.y - self._last_touch_pos[1]
+            if self._touch1_pos:
+                dx = touch.x - self._touch1_pos[0]
+                dy = touch.y - self._touch1_pos[1]
 
                 if abs(dx) > self._move_threshold or abs(dy) > self._move_threshold:
                     self._is_dragging = True
-                    self._smoothed_dx = self._smoothed_dx * (1 - self._smoothing) + dx * self._smoothing
-                    self._smoothed_dy = self._smoothed_dy * (1 - self._smoothing) + dy * self._smoothing
-                    screen_dx = int(self._smoothed_dx * self._move_sensitivity)
-                    screen_dy = int(-self._smoothed_dy * self._move_sensitivity)
+
+                    if self.mode == self.MODE_TOUCH:
+                        self._smoothed_dx = self._smoothed_dx * (1 - self._smoothing) + dx * self._smoothing
+                        self._smoothed_dy = self._smoothed_dy * (1 - self._smoothing) + dy * self._smoothing
+                        screen_dx = int(self._smoothed_dx * self._move_sensitivity)
+                        screen_dy = int(-self._smoothed_dy * self._move_sensitivity)
+                    else:
+                        self._smoothed_dx = self._smoothed_dx * (1 - self._smoothing) + dx * self._smoothing
+                        self._smoothed_dy = self._smoothed_dy * (1 - self._smoothing) + dy * self._smoothing
+                        screen_dx = int(self._smoothed_dx * self._pointer_sensitivity)
+                        screen_dy = int(-self._smoothed_dy * self._pointer_sensitivity)
+
                     if abs(screen_dx) >= 1 or abs(screen_dy) >= 1:
                         self.client.send_mouse_move_relative(screen_dx, screen_dy)
 
-            self._last_touch_pos = (touch.x, touch.y)
+                self._touch1_pos = (touch.x, touch.y)
             return True
         return super().on_touch_move(touch)
 
     def on_touch_up(self, touch):
         if touch.grab_current is self:
             touch.ungrab(self)
+            now = time.time()
 
-            if self._second_touch is touch:
-                self._second_touch = None
-                return True
+            if self._touch2_grabbed and self._touch2_start:
+                t2_start = self._touch2_start
+                t2_end = (touch.x, touch.y)
+                t2_dx = t2_end[0] - t2_start[0]
+                t2_dy = t2_end[1] - t2_start[1]
+                t2_dist = (t2_dx**2 + t2_dy**2) ** 0.5
+                t2_elapsed = max(0.01, now - self._touch2_time)
+                t2_velocity = t2_dist / t2_elapsed
 
-            if self._second_touch is not None:
-                if self._two_finger_tap and not self._is_dragging:
-                    coords = self._get_screen_coords(touch.x, touch.y)
+                if t2_dist > SWIPE_THRESHOLD and t2_velocity > SWIPE_VELOCITY:
+                    if abs(t2_dy) > abs(t2_dx):
+                        if t2_dy > 0:
+                            self._send_scroll(5)
+                        else:
+                            self._send_scroll(-5)
+                    else:
+                        if t2_dx > 0:
+                            self.client.send_hotkey("alt", "shift", "tab")
+                        else:
+                            self.client.send_hotkey("alt", "tab")
+                elif t2_dist < 20:
+                    coords = self._get_screen_coords(t2_end[0], t2_end[1])
                     if coords:
                         self.client.send_mouse_click(coords[0], coords[1], "right")
-                self._second_touch = None
-                self._last_touch_pos = None
-                self._touch_start = None
+
+                self._touch2_start = None
+                self._touch2_pos = None
+                self._touch2_grabbed = False
+                self._touch1_start = None
+                self._touch1_pos = None
+                self._touch1_grabbed = False
                 self._is_dragging = False
-                self._two_finger_tap = False
                 return True
 
-            if not self._is_dragging and self._touch_start:
-                coords = self._get_screen_coords(touch.x, touch.y)
-                if coords:
-                    self.client.send_mouse_click(coords[0], coords[1], "left")
+            if self._touch1_start:
+                t1_start = self._touch1_start
+                t1_end = (touch.x, touch.y)
+                t1_dx = t1_end[0] - t1_start[0]
+                t1_dy = t1_end[1] - t1_start[1]
+                t1_dist = (t1_dx**2 + t1_dy**2) ** 0.5
+                t1_elapsed = max(0.01, now - self._touch1_time)
+                t1_velocity = t1_dist / t1_elapsed
 
-            self._last_touch_pos = None
-            self._touch_start = None
+                if self.mode == self.MODE_TOUCH:
+                    if t1_dist > SWIPE_THRESHOLD and t1_velocity > SWIPE_VELOCITY:
+                        if abs(t1_dy) > abs(t1_dx):
+                            if t1_dy > 0:
+                                self._send_scroll(5)
+                            else:
+                                self._send_scroll(-5)
+                        else:
+                            if t1_dx > 0:
+                                self.client.send_hotkey("alt", "shift", "tab")
+                            else:
+                                self.client.send_hotkey("alt", "tab")
+                    elif not self._is_dragging:
+                        coords = self._get_screen_coords(t1_end[0], t1_end[1])
+                        if coords:
+                            self.client.send_mouse_click(coords[0], coords[1], "left")
+                else:
+                    if not self._is_dragging and t1_dist < 15:
+                        time_since_last = now - self._last_tap_time
+                        last_pos = self._last_tap_pos
+                        dist_from_last = 0
+                        if last_pos:
+                            dist_from_last = ((t1_end[0] - last_pos[0])**2 + (t1_end[1] - last_pos[1])**2) ** 0.5
+
+                        if time_since_last < DOUBLE_TAP_TIMEOUT and dist_from_last < 40:
+                            self.client.send_mouse_click(0, 0, "right")
+                            self._last_tap_time = 0
+                            self._last_tap_pos = None
+                        else:
+                            self.client.send_mouse_click(0, 0, "left")
+                            self._last_tap_time = now
+                            self._last_tap_pos = t1_end
+
+            self._touch1_start = None
+            self._touch1_pos = None
+            self._touch1_grabbed = False
             self._is_dragging = False
             self._smoothed_dx = 0
             self._smoothed_dy = 0
             return True
         return super().on_touch_up(touch)
-
-    def _send_click(self, button):
-        if self.client and self.client.connected:
-            self.client.send_mouse_click(0, 0, button)
 
     def _send_scroll(self, dy):
         if self.client and self.client.connected:
@@ -338,7 +457,7 @@ class ControlScreen(Screen):
                                 font_size=18)
         content.add_widget(text_input)
 
-        btn_layout = BoxLayout(size_hint_y=0.3, spacing=10)
+        btn_layout = BoxLayout(size_hint_y=0.3, spacing=8)
 
         special_keys = [
             ("Enter", "enter"), ("Tab", "tab"), ("Esc", "escape"),
@@ -348,7 +467,7 @@ class ControlScreen(Screen):
         ]
 
         for label, key in special_keys:
-            btn = Button(text=label, font_size=12)
+            btn = Button(text=label, font_size=11)
             btn.bind(on_press=lambda b, k=key: self._send_special_key(k))
             btn_layout.add_widget(btn)
 
@@ -419,7 +538,7 @@ class ControlScreen(Screen):
 
 class LazyBoyApp(App):
     def build(self):
-        self.title = "Lazy Boy"
+        self.title = "Lazy Boy Remote"
         self.sm = ScreenManager()
 
         self.discovery_screen = DiscoveryScreen(name="discovery")
