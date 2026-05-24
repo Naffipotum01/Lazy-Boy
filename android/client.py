@@ -31,7 +31,9 @@ class ControlClient:
         self._voice_options_callback = None
         self._audio_callback = None
         self._pc_camera_callback = None
-        self._thread = None
+        self._radio_status_callback = None
+        self._radio_audio_callback = None
+        self._radio_phone_fm_callback = None
 
     def set_frame_callback(self, callback):
         self._frame_callback = callback
@@ -55,14 +57,25 @@ class ControlClient:
         self._phone_back_callback = callback
 
     def set_phone_volume_callback(self, callback):
+        self._phone_volume_callback = callback
 
     def set_voice_options_callback(self, callback):
+        self._voice_options_callback = callback
 
     def set_audio_callback(self, callback):
         self._audio_callback = callback
 
     def set_pc_camera_callback(self, callback):
         self._pc_camera_callback = callback
+
+    def set_radio_status_callback(self, callback):
+        self._radio_status_callback = callback
+
+    def set_radio_audio_callback(self, callback):
+        self._radio_audio_callback = callback
+
+    def set_radio_phone_fm_callback(self, callback):
+        self._radio_phone_fm_callback = callback
         self._voice_options_callback = callback
         self._phone_volume_callback = callback
 
@@ -157,6 +170,28 @@ class ControlClient:
                     import base64
                     jpg = base64.b64decode(data["data"])
                     self._pc_camera_callback(jpg)
+
+            elif msg_type == "radio_status":
+                if self._radio_status_callback:
+                    self._radio_status_callback(data)
+
+            elif msg_type == "radio_scan_results":
+                if self._radio_status_callback:
+                    self._radio_status_callback(data)
+
+            elif msg_type == "radio_station_list":
+                if self._radio_status_callback:
+                    self._radio_status_callback(data)
+
+            elif msg_type == "pc_radio_audio":
+                if self._radio_audio_callback:
+                    import base64
+                    pcm = base64.b64decode(data["data"])
+                    self._radio_audio_callback(pcm)
+
+            elif msg_type == "radio_phone_fm_start":
+                if self._radio_phone_fm_callback:
+                    self._radio_phone_fm_callback(data.get("freq", 88.0))
 
         except Exception:
             pass

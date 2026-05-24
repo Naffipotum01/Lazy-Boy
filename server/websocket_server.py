@@ -14,6 +14,7 @@ from audio_stream import AudioStreamer
 from camera_stream import PcCameraStreamer
 from phone_camera_viewer import PhoneCameraViewer
 from device_bridge import DeviceBridge
+from radio_bridge import PcRadioTuner
 
 WS_PORT = 8765
 FS_PORT = 8766
@@ -42,6 +43,9 @@ class ControlServer:
         self._phone_cam_viewer = None
         self.bridge = DeviceBridge()
         self.bridge.set_send_callback(self._send_to_phone)
+        self.radio = PcRadioTuner()
+        self.radio.set_send_callback(self._on_radio_audio)
+        self._radio_playing = False
 
     async def _handler(self, websocket):
         addr = websocket.remote_address
@@ -151,6 +155,13 @@ class ControlServer:
         import base64
         self._send_to_phone({
             "type": "pc_audio",
+            "data": base64.b64encode(pcm_bytes).decode(),
+        })
+
+    def _on_radio_audio(self, pcm_bytes):
+        import base64
+        self._send_to_phone({
+            "type": "pc_radio_audio",
             "data": base64.b64encode(pcm_bytes).decode(),
         })
 
@@ -418,6 +429,52 @@ class ControlServer:
             self._send_to_phone({
                 "type": "bridge_status_info",
                 **status,
+            })
+
+        # === Radio Commands ===
+        elif cmd == "radio_tune":
+            station = data.get("station", "")
+            direction = data.get("direction", "pc_to_phone")
+            result = self.radio.tune(station)
+            self._radio_playing = result.get("success", False)
+            self._send_to_phone({"type": "radio_status", **result})
+
+        elif cmd == "radio_tune_url":
+            url = data.get("url", "")
+            direction = data.get("direction", "pc_to_phone")
+            result = self.radio.play_url_direct(url)
+            self._radio_playing = result.get("success", False)
+            self._send_to_phone({"type": "radio_status", **result})
+
+        elif cmd == "radio_phone_fm":
+            freq = data.get("freq", 88.0)
+            self._send_to_phone({
+                "type": "radio_phone_fm_start",
+                "freq": freq,
+            })
+
+        elif cmd == "radio_phone_audio":
+            import base64
+            raw = base64.b64decode(data["data"])
+            self.audio.write_audio(raw)
+
+        elif cmd == "radio_scan":
+            stations = self.radio.scan_frequencies()
+            self._send_to_phone({
+                "type": "radio_scan_results",
+                "stations": stations,
+            })
+
+        elif cmd == "radio_stop":
+            self.radio.stop()
+            self._radio_playing = False
+            self._send_to_phone({"type": "radio_status", "success": True, "info": "stopped"})
+
+        elif cmd == "radio_list":
+            stations = self.radio.get_stations()
+            self._send_to_phone({
+                "type": "radio_station_list",
+                "stations": stations,
             })
 
     def _list_files(self, path):

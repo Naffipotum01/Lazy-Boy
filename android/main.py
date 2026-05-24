@@ -31,6 +31,8 @@ from saved_devices import load_saved, save_device, forget_device
 from voice import VoiceController
 from bridge_screen import BridgeScreen
 from device_bridge import DeviceBridge
+from radio_screen import RadioScreen
+from phone_radio import PhoneRadio
 
 SWIPE_THRESHOLD = 60
 SWIPE_VELOCITY = 250
@@ -726,6 +728,12 @@ class ControlScreen(Screen):
         bridge_btn.bind(on_press=self._open_bridge)
         top_bar.add_widget(bridge_btn)
 
+        radio_btn = Button(text="Radio", size_hint_x=0.1,
+                           background_color=(0.6, 0.5, 0.2, 1),
+                           font_size=9)
+        radio_btn.bind(on_press=self._open_radio)
+        top_bar.add_widget(radio_btn)
+
         settings_btn = Button(text="Bind", size_hint_x=0.1,
                               background_color=(0.5, 0.3, 0.7, 1),
                               font_size=11, bold=True)
@@ -815,6 +823,7 @@ class ControlScreen(Screen):
             self.client.set_clipboard_callback(self._on_clipboard_push)
             self.client.set_voice_options_callback(self._on_voice_options)
             self.device_bridge.set_client(self.client)
+            self.phone_radio.set_client(self.client)
 
     def on_leave(self):
         Window.unbind(on_keyboard=self._on_keyboard)
@@ -1490,16 +1499,25 @@ class LazyBoyApp(App):
         self.file_browser_screen = FileBrowserScreen(name="file_browser")
         self.settings_screen = KeyBindingsScreen(name="settings")
         self.bridge_screen = BridgeScreen(name="bridge")
+        self.radio_screen = RadioScreen(name="radio")
+        self.phone_radio = PhoneRadio()
 
         self.sm.add_widget(self.discovery_screen)
         self.sm.add_widget(self.control_screen)
         self.sm.add_widget(self.file_browser_screen)
         self.sm.add_widget(self.settings_screen)
         self.sm.add_widget(self.bridge_screen)
+        self.sm.add_widget(self.radio_screen)
 
         self.client = ControlClient()
         self.client.set_frame_callback(self._on_frame)
         self.client.set_status_callback(self._on_status)
+        self.client.set_radio_status_callback(self._on_radio_status)
+        self.client.set_radio_audio_callback(self._on_radio_audio)
+        self.client.set_radio_phone_fm_callback(self._on_radio_phone_fm)
+
+        self.radio_screen.client = self.client
+        self.radio_screen.phone_radio = self.phone_radio
 
         return self.sm
 
@@ -1525,6 +1543,35 @@ class LazyBoyApp(App):
                 self._pending_device = None
         if status in ("denied", "disconnected"):
             Clock.schedule_once(lambda dt: self.show_discovery(), 2)
+
+    def _open_radio(self, *args):
+        if self.manager and hasattr(self.manager, "get_screen"):
+            rs = self.manager.get_screen("radio")
+            rs.client = self.client
+            rs.phone_radio = self.phone_radio
+            self.manager.current = "radio"
+
+    def _on_radio_status(self, data):
+        if self.manager and hasattr(self.manager, "get_screen"):
+            rs = self.manager.get_screen("radio")
+            msg_type = data.get("type", "")
+            if msg_type == "radio_station_list":
+                rs.status_label.text = "Stations loaded"
+            elif msg_type == "radio_scan_results":
+                stations = data.get("stations", [])
+                rs.status_label.text = f"{len(stations)} frequencies scanned"
+            else:
+                rs.status_label.text = data.get("info", data.get("station", str(data)))
+
+    def _on_radio_audio(self, pcm_bytes):
+        if self.manager and hasattr(self.manager, "get_screen"):
+            rs = self.manager.get_screen("radio")
+            rs.on_pc_radio_audio(pcm_bytes)
+
+    def _on_radio_phone_fm(self, freq):
+        if self.manager and hasattr(self.manager, "get_screen"):
+            rs = self.manager.get_screen("radio")
+            rs.status_label.text = f"Phone FM tuning: {freq} MHz"
 
     def on_stop(self):
         self.client.disconnect()
