@@ -8,9 +8,10 @@ BROADCAST_INTERVAL = 2
 
 
 class DiscoveryService:
-    def __init__(self, hostname=None):
+    def __init__(self, hostname=None, remote_info=None):
         self.hostname = hostname or socket.gethostname()
         self.ip = self._get_local_ip()
+        self.remote_info = remote_info or {}
         self.running = False
         self._thread = None
 
@@ -28,11 +29,16 @@ class DiscoveryService:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         sock.settimeout(1)
-        message = json.dumps({
+        ann = {
             "type": "lazyboy_announce",
             "hostname": self.hostname,
-            "ip": self.ip
-        }).encode()
+            "ip": self.ip,
+        }
+        if self.remote_info.get("public_ip"):
+            ann["public_ip"] = self.remote_info["public_ip"]
+        if self.remote_info.get("ngrok_url"):
+            ann["ngrok_url"] = self.remote_info["ngrok_url"]
+        message = json.dumps(ann).encode()
         while self.running:
             try:
                 sock.sendto(message, ("255.255.255.255", DISCOVERY_PORT))
@@ -54,11 +60,16 @@ class DiscoveryService:
                 data, addr = sock.recvfrom(1024)
                 msg = json.loads(data.decode())
                 if msg.get("type") == "lazyboy_discover":
-                    response = json.dumps({
+                    ann = {
                         "type": "lazyboy_announce",
                         "hostname": self.hostname,
-                        "ip": self.ip
-                    }).encode()
+                        "ip": self.ip,
+                    }
+                    if self.remote_info.get("public_ip"):
+                        ann["public_ip"] = self.remote_info["public_ip"]
+                    if self.remote_info.get("ngrok_url"):
+                        ann["ngrok_url"] = self.remote_info["ngrok_url"]
+                    response = json.dumps(ann).encode()
                     sock.sendto(response, addr)
             except socket.timeout:
                 continue

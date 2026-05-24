@@ -383,16 +383,35 @@ class DiscoveryScreen(Screen):
         layout.add_widget(header)
 
         self.status_label = Label(text="Scanning for PCs...",
-                                   font_size=16, size_hint_y=0.08,
+                                   font_size=16, size_hint_y=0.06,
                                    color=(0.6, 0.6, 0.6, 1))
         layout.add_widget(self.status_label)
 
-        scroll = ScrollView(size_hint_y=0.65)
+        scroll = ScrollView(size_hint_y=0.5)
         self.device_list = BoxLayout(orientation="vertical",
-                                      size_hint_y=None, spacing=8, padding=[0, 10])
+                                       size_hint_y=None, spacing=6, padding=[0, 8])
         self.device_list.bind(minimum_height=self.device_list.setter("height"))
         scroll.add_widget(self.device_list)
         layout.add_widget(scroll)
+
+        manual_box = BoxLayout(orientation="vertical", size_hint_y=0.22, spacing=5,
+                                padding=[0, 5])
+        manual_box.add_widget(Label(text="Manual Connect (remote IP or tunnel URL):",
+                                     font_size=12, size_hint_y=0.2,
+                                     color=(0.5, 0.5, 0.5, 1)))
+        ip_row = BoxLayout(size_hint_y=0.35, spacing=5)
+        self.manual_input = TextInput(
+            hint_text="IP, hostname, or ws:// url", font_size=14,
+            size_hint_x=0.7, multiline=False
+        )
+        ip_row.add_widget(self.manual_input)
+        connect_btn = Button(text="Connect", size_hint_x=0.3,
+                              background_color=(0.2, 0.7, 0.3, 1),
+                              font_size=14, bold=True)
+        connect_btn.bind(on_press=self._manual_connect)
+        ip_row.add_widget(connect_btn)
+        manual_box.add_widget(ip_row)
+        layout.add_widget(manual_box)
 
         btn_layout = BoxLayout(size_hint_y=0.1, spacing=10)
         refresh_btn = Button(text="Refresh", background_color=(0.2, 0.6, 1, 1))
@@ -429,19 +448,74 @@ class DiscoveryScreen(Screen):
         self.status_label.text = f"Found {len(devices)} PC(s)"
 
         for device in devices:
+            lines = f"{device['hostname']}\n{device['ip']}"
+            has_remote = "public_ip" in device or "ngrok_url" in device
+            if has_remote:
+                lines += "\n[Remote available]"
+
             btn = Button(
-                text=f"{device['hostname']}\n{device['ip']}",
-                size_hint_y=None, height=80,
-                background_color=(0.15, 0.15, 0.15, 1),
-                font_size=18
+                text=lines,
+                size_hint_y=None, height=70,
+                background_color=(0.15, 0.15, 0.18, 1),
+                font_size=15, markup=True, halign="center"
             )
             btn.bind(on_press=lambda b, d=device: self._connect_to(d))
-            self.device_list.add_widget(btn)
+
+            wrapper = BoxLayout(orientation="vertical", size_hint_y=None, height=95)
+            wrapper.add_widget(btn)
+
+            if has_remote:
+                remote_row = BoxLayout(size_hint_y=None, height=25, spacing=2)
+                if device.get("public_ip"):
+                    rbtn = Button(
+                        text=f"Remote: {device['public_ip']}",
+                        font_size=10,
+                        background_color=(0.6, 0.4, 0.2, 1),
+                        size_hint_x=0.5
+                    )
+                    rbtn.bind(on_press=lambda b, d=device: self._connect_remote(d, d["public_ip"]))
+                    remote_row.add_widget(rbtn)
+                if device.get("ngrok_url"):
+                    tbtn = Button(
+                        text="Tunnel",
+                        font_size=10,
+                        background_color=(0.4, 0.2, 0.6, 1),
+                        size_hint_x=0.5
+                    )
+                    tbtn.bind(on_press=lambda b, d=device: self._connect_remote(d, d["ngrok_url"]))
+                    remote_row.add_widget(tbtn)
+                wrapper.add_widget(remote_row)
+
+            self.device_list.add_widget(wrapper)
 
     def _connect_to(self, device):
         if self.discovery:
             self.discovery.stop()
         self.app_ref.connect_to(device)
+
+    def _connect_remote(self, device, remote_addr):
+        if self.discovery:
+            self.discovery.stop()
+        addr = remote_addr.replace("tcp://", "ws://")
+        if not addr.startswith("ws://"):
+            addr = f"ws://{addr}"
+        device_copy = dict(device)
+        device_copy["ip"] = addr
+        self.app_ref.connect_to(device_copy)
+
+    def _manual_connect(self, *args):
+        text = self.manual_input.text.strip()
+        if not text:
+            return
+        text = text.replace("tcp://", "ws://")
+        if not text.startswith("ws://") and not text.startswith("wss://"):
+            if ":" in text:
+                text = f"ws://{text}"
+            else:
+                text = f"ws://{text}:8765"
+        if self.discovery:
+            self.discovery.stop()
+        self.app_ref.connect_to({"ip": text, "hostname": text})
 
 
 class ControlScreen(Screen):

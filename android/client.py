@@ -47,7 +47,10 @@ class ControlClient:
             self.disconnect()
 
         self._status_callback and self._status_callback("connecting")
-        uri = f"ws://{ip}:{WS_PORT}"
+        if ip.startswith("ws://") or ip.startswith("wss://"):
+            uri = ip
+        else:
+            uri = f"ws://{ip}:{WS_PORT}"
 
         self._thread = threading.Thread(target=self._connect_thread, args=(uri,), daemon=True)
         self._thread.start()

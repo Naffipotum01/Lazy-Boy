@@ -48,11 +48,16 @@ class NetworkDiscovery:
                 if msg.get("type") == "lazyboy_announce":
                     ip = msg.get("ip", addr[0])
                     hostname = msg.get("hostname", "Unknown")
+                    device = {
+                        "ip": ip,
+                        "hostname": hostname,
+                    }
+                    if msg.get("public_ip"):
+                        device["public_ip"] = msg["public_ip"]
+                    if msg.get("ngrok_url"):
+                        device["ngrok_url"] = msg["ngrok_url"]
                     if ip not in self._found:
-                        self._found[ip] = {
-                            "ip": ip,
-                            "hostname": hostname
-                        }
+                        self._found[ip] = device
                         self.callback(list(self._found.values()))
             except socket.timeout:
                 break

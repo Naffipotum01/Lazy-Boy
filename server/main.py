@@ -8,6 +8,7 @@ from screen_capture import ScreenCapture
 from input_handler import InputHandler
 from websocket_server import ControlServer
 from approval import ApprovalDialog
+from remote import RemoteAccess
 
 
 def main():
@@ -18,9 +19,24 @@ def main():
     screen_w, screen_h = pyautogui.size()
     print(f"[*] Screen resolution: {screen_w}x{screen_h}")
 
-    discovery = DiscoveryService()
+    remote = RemoteAccess()
+    public_ip = remote.detect_public_ip()
+    if public_ip:
+        print(f"[*] Public IP: {public_ip}")
+        remote.start_upnp()
+    else:
+        print("[*] Public IP: unknown (no internet?)")
+
+    ngrok_token = os.environ.get("NGROK_AUTH_TOKEN")
+    if ngrok_token:
+        ngrok_url = remote.start_ngrok(ngrok_token)
+        if ngrok_url:
+            print(f"[*] Remote URL: {ngrok_url}")
+
+    conn_info = remote.get_connection_info()
+    discovery = DiscoveryService(remote_info=conn_info)
     print(f"[*] Hostname: {discovery.hostname}")
-    print(f"[*] IP: {discovery.ip}")
+    print(f"[*] Local IP: {discovery.ip}")
 
     screen_capture = ScreenCapture(quality=40, scale=0.5)
     input_handler = InputHandler(screen_w, screen_h)
@@ -39,6 +55,14 @@ def main():
     print("[*] Waiting for connections...")
     print("[*] Press Ctrl+C to stop\n")
 
+    print("--- Connection Info ---")
+    print(f"  Local:   ws://{discovery.ip}:8765")
+    if public_ip:
+        print(f"  Remote:  ws://{public_ip}:8765 (requires port forwarding)")
+    if conn_info.get("ngrok_url"):
+        print(f"  Tunnel:  {conn_info['ngrok_url']}")
+    print("-----------------------\n")
+
     try:
         approval.start()
     except KeyboardInterrupt:
@@ -47,6 +71,7 @@ def main():
         discovery.stop()
         screen_capture.stop()
         server.stop()
+        remote.cleanup()
         print("[*] Server stopped.")
 
 
