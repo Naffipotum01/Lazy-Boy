@@ -13,9 +13,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build APK
+      - name: Accept Android licenses and build
         working-directory: android
         run: |
+          mkdir -p /github/home/.buildozer/android/platform/android-sdk/licenses
+          echo -e "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > /github/home/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo -e "\n84831b9409646a918e30573bab4c9c91346d8abd" >> /github/home/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo -e "\nd56f5187479451eabf01fb78af6dfcb131a6481e" >> /github/home/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo -e "\ne6b7c2ab7fa2298c15165e9583d0cbd0846f5099" >> /github/home/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
+          echo -e "\n33b6a2b64607f11b759f320ef9dff4ae5c47d97a" >> /github/home/.buildozer/android/platform/android-sdk/licenses/android-sdk-license
           buildozer android debug
         timeout-minutes: 90
 
