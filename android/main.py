@@ -29,6 +29,8 @@ from settings_screen import KeyBindingsScreen
 from file_browser import FileBrowserScreen
 from saved_devices import load_saved, save_device, forget_device
 from voice import VoiceController
+from bridge_screen import BridgeScreen
+from device_bridge import DeviceBridge
 
 SWIPE_THRESHOLD = 60
 SWIPE_VELOCITY = 250
@@ -718,6 +720,12 @@ class ControlScreen(Screen):
         self.pc_cam_btn.bind(on_press=self._toggle_pc_camera)
         top_bar.add_widget(self.pc_cam_btn)
 
+        bridge_btn = Button(text="Bridge", size_hint_x=0.1,
+                            background_color=(0.2, 0.6, 0.6, 1),
+                            font_size=9)
+        bridge_btn.bind(on_press=self._open_bridge)
+        top_bar.add_widget(bridge_btn)
+
         settings_btn = Button(text="Bind", size_hint_x=0.1,
                               background_color=(0.5, 0.3, 0.7, 1),
                               font_size=11, bold=True)
@@ -741,6 +749,7 @@ class ControlScreen(Screen):
         self._host_mode = False
         self._host_capture_event = None
         self.voice = VoiceController(app=None, client=None)
+        self.device_bridge = DeviceBridge()
 
         self.mode_hint = Label(
             text="[b]TOUCH MODE[/b]  |  Tap = click  |  Swipe = scroll/switch",
@@ -805,6 +814,7 @@ class ControlScreen(Screen):
             Window.bind(on_keyboard=self._on_keyboard)
             self.client.set_clipboard_callback(self._on_clipboard_push)
             self.client.set_voice_options_callback(self._on_voice_options)
+            self.device_bridge.set_client(self.client)
 
     def on_leave(self):
         Window.unbind(on_keyboard=self._on_keyboard)
@@ -1332,6 +1342,13 @@ class ControlScreen(Screen):
         except Exception:
             pass
 
+    def _open_bridge(self, *args):
+        if self.manager and hasattr(self.manager, "get_screen"):
+            bs = self.manager.get_screen("bridge")
+            bs.client = self.client
+            bs.bridge = self.device_bridge
+            self.manager.current = "bridge"
+
     def _on_voice_options(self, options, prompt):
         self.voice.app = self.app_ref
         self.voice.client = self.client
@@ -1472,11 +1489,13 @@ class LazyBoyApp(App):
 
         self.file_browser_screen = FileBrowserScreen(name="file_browser")
         self.settings_screen = KeyBindingsScreen(name="settings")
+        self.bridge_screen = BridgeScreen(name="bridge")
 
         self.sm.add_widget(self.discovery_screen)
         self.sm.add_widget(self.control_screen)
         self.sm.add_widget(self.file_browser_screen)
         self.sm.add_widget(self.settings_screen)
+        self.sm.add_widget(self.bridge_screen)
 
         self.client = ControlClient()
         self.client.set_frame_callback(self._on_frame)

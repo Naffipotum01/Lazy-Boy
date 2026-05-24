@@ -13,6 +13,7 @@ from voice_commands import VoiceCommandHandler
 from audio_stream import AudioStreamer
 from camera_stream import PcCameraStreamer
 from phone_camera_viewer import PhoneCameraViewer
+from device_bridge import DeviceBridge
 
 WS_PORT = 8765
 FS_PORT = 8766
@@ -39,6 +40,8 @@ class ControlServer:
         self._audio_speaker_on = False
         self.pc_cam = PcCameraStreamer()
         self._phone_cam_viewer = None
+        self.bridge = DeviceBridge()
+        self.bridge.set_send_callback(self._send_to_phone)
 
     async def _handler(self, websocket):
         addr = websocket.remote_address
@@ -375,6 +378,38 @@ class ControlServer:
                 self.input.mouse_click(
                     data.get("x", 0), data.get("y", 0), btn
                 )
+
+        elif cmd == "bridge_location":
+            self._broadcast({
+                "type": "bridge_location_info",
+                "lat": data["lat"],
+                "lon": data["lon"],
+                "accuracy": data.get("accuracy", 0),
+            })
+
+        elif cmd == "bridge_pc_hotspot_start":
+            result = self.bridge.share_pc_wifi_to_phone()
+            self._send_to_phone({
+                "type": "bridge_hotspot_status",
+                **result,
+            })
+
+        elif cmd == "bridge_pc_hotspot_stop":
+            self.bridge.stop_pc_hotspot()
+
+        elif cmd == "bridge_usb_share":
+            result = self.bridge.share_wifi_to_pc()
+            self._send_to_phone({
+                "type": "bridge_network_status",
+                **result,
+            })
+
+        elif cmd == "bridge_status":
+            status = self.bridge.get_bridge_status()
+            self._send_to_phone({
+                "type": "bridge_status_info",
+                **status,
+            })
 
     def _list_files(self, path):
         import os
