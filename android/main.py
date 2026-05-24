@@ -23,11 +23,13 @@ import time
 from discovery import NetworkDiscovery
 from client import ControlClient
 
-SWIPE_THRESHOLD = 80
-SWIPE_VELOCITY = 300
-TAP_TIMEOUT = 0.3
+SWIPE_THRESHOLD = 60
+SWIPE_VELOCITY = 250
 DOUBLE_TAP_TIMEOUT = 0.35
-LONG_PRESS_TIMEOUT = 0.5
+POINTER_SENSITIVITY = 2.5
+TOUCH_SENSITIVITY = 1.6
+SMOOTHING = 0.45
+MOVE_THRESHOLD = 1
 
 
 class DiscoveryScreen(Screen):
@@ -117,26 +119,29 @@ class ControlScreen(Screen):
         self.app_ref = None
         self._texture = None
         self.mode = self.MODE_TOUCH
+        self._showing_screen = True
 
-        self._touch1_start = None
-        self._touch1_pos = None
-        self._touch1_time = 0
-        self._touch1_grabbed = False
-        self._touch2_start = None
-        self._touch2_pos = None
-        self._touch2_grabbed = False
+        self._t1_start = None
+        self._t1_pos = None
+        self._t1_time = 0
+        self._t1_grabbed = False
+        self._t2_start = None
+        self._t2_pos = None
+        self._t2_time = 0
+        self._t2_grabbed = False
         self._is_dragging = False
         self._last_tap_time = 0
         self._last_tap_pos = None
 
-        self._move_sensitivity = 1.8
-        self._pointer_sensitivity = 2.5
-        self._smoothing = 0.4
-        self._smoothed_dx = 0
-        self._smoothed_dy = 0
-        self._move_threshold = 1
+        self._smooth_dx = 0
+        self._smooth_dy = 0
 
         self.layout = FloatLayout()
+
+        with self.layout.canvas.before:
+            Color(0.08, 0.08, 0.08, 1)
+            self._bg_rect = Rectangle(pos=self.layout.pos, size=self.layout.size)
+        self.layout.bind(pos=self._update_bg, size=self._update_bg)
 
         self.screen_image = KivyImage(
             allow_stretch=True, keep_ratio=True,
@@ -144,32 +149,43 @@ class ControlScreen(Screen):
         )
         self.layout.add_widget(self.screen_image)
 
+        self.trackpad_label = Label(
+            text="[b]POINTER MODE[/b]\n\nFinger = trackpad\nTap = click | Double-tap = right click\nTwo-finger swipe = scroll / switch apps",
+            markup=True, font_size=18, halign="center", valign="center",
+            size_hint=(0.7, 0.3),
+            pos_hint={"center_x": 0.5, "center_y": 0.5},
+            color=(0.6, 0.6, 0.6, 1)
+        )
+        self.trackpad_label.bind(size=self.trackpad_label.setter("text_size"))
+        self.trackpad_label.opacity = 0
+        self.layout.add_widget(self.trackpad_label)
+
         top_bar = BoxLayout(size_hint_y=0.08, pos_hint={"top": 1},
                              padding=[6, 4], spacing=6)
 
         self.touch_btn = Button(
-            text="Touch", size_hint_x=0.16,
+            text="Touch", size_hint_x=0.18,
             background_color=(0.2, 0.7, 0.3, 1),
-            font_size=13, bold=True
+            font_size=14, bold=True
         )
         self.touch_btn.bind(on_press=lambda b: self._set_mode(self.MODE_TOUCH))
         top_bar.add_widget(self.touch_btn)
 
         self.pointer_btn = Button(
-            text="Pointer", size_hint_x=0.16,
+            text="Pointer", size_hint_x=0.18,
             background_color=(0.3, 0.3, 0.3, 1),
-            font_size=13
+            font_size=14
         )
         self.pointer_btn.bind(on_press=lambda b: self._set_mode(self.MODE_POINTER))
         top_bar.add_widget(self.pointer_btn)
 
         self.status_label = Label(text="Connecting...",
                                    font_size=12, halign="center",
-                                   size_hint_x=0.28)
+                                   size_hint_x=0.24)
         self.status_label.bind(size=self.status_label.setter("text_size"))
         top_bar.add_widget(self.status_label)
 
-        keyboard_btn = Button(text="KB", size_hint_x=0.1,
+        keyboard_btn = Button(text="KB", size_hint_x=0.12,
                                background_color=(0.3, 0.3, 0.8, 1),
                                font_size=14, bold=True)
         keyboard_btn.bind(on_press=self._show_keyboard)
@@ -183,28 +199,38 @@ class ControlScreen(Screen):
 
         self.layout.add_widget(top_bar)
 
-        self.mode_label = Label(
-            text="[b]TOUCH MODE[/b]\nTap to click | Drag to move\nSwipe to scroll/switch apps",
-            markup=True, font_size=14, halign="center",
-            size_hint=(0.6, 0.08),
-            pos_hint={"center_x": 0.5, "y": 0.02},
-            color=(1, 1, 1, 0.7)
+        self.mode_hint = Label(
+            text="[b]TOUCH MODE[/b]  |  Tap = click  |  Swipe = scroll/switch",
+            markup=True, font_size=12, halign="center",
+            size_hint=(0.9, 0.05),
+            pos_hint={"center_x": 0.5, "y": 0.01},
+            color=(1, 1, 1, 0.5)
         )
-        self.mode_label.bind(size=self.mode_label.setter("text_size"))
-        self.layout.add_widget(self.mode_label)
+        self.mode_hint.bind(size=self.mode_hint.setter("text_size"))
+        self.layout.add_widget(self.mode_hint)
 
         self.add_widget(self.layout)
+
+    def _update_bg(self, *args):
+        self._bg_rect.pos = self.layout.pos
+        self._bg_rect.size = self.layout.size
 
     def _set_mode(self, mode):
         self.mode = mode
         if mode == self.MODE_TOUCH:
             self.touch_btn.background_color = (0.2, 0.7, 0.3, 1)
             self.pointer_btn.background_color = (0.3, 0.3, 0.3, 1)
-            self.mode_label.text = "[b]TOUCH MODE[/b]\nTap to click | Drag to move\nSwipe to scroll/switch apps"
+            self.screen_image.opacity = 1
+            self._showing_screen = True
+            self.trackpad_label.opacity = 0
+            self.mode_hint.text = "[b]TOUCH MODE[/b]  |  Tap = click  |  Swipe = scroll/switch"
         else:
             self.touch_btn.background_color = (0.3, 0.3, 0.3, 1)
             self.pointer_btn.background_color = (0.2, 0.5, 0.9, 1)
-            self.mode_label.text = "[b]POINTER MODE[/b]\nFinger = trackpad | Tap = click\nDouble-tap = right click"
+            self.screen_image.opacity = 0
+            self._showing_screen = False
+            self.trackpad_label.opacity = 1
+            self.mode_hint.text = "[b]POINTER MODE[/b]  |  Finger = trackpad  |  Tap = click  |  Double-tap = right click"
 
     def on_enter(self):
         if self.client and self.client.connected:
@@ -215,6 +241,8 @@ class ControlScreen(Screen):
         Window.unbind(on_keyboard=self._on_keyboard)
 
     def update_frame(self, img_bytes):
+        if not self._showing_screen:
+            return
         try:
             buf = BytesIO(img_bytes)
             ci = CoreImage(buf, ext="jpg")
@@ -240,8 +268,6 @@ class ControlScreen(Screen):
             elif status.startswith("error"):
                 self.status_label.text = "Error"
                 self.status_label.color = (0.8, 0.2, 0.2, 1)
-            else:
-                self.status_label.text = status
         Clock.schedule_once(_update)
 
     def _get_screen_coords(self, touch_x, touch_y):
@@ -297,154 +323,144 @@ class ControlScreen(Screen):
 
         now = time.time()
 
-        if self._touch1_grabbed and not self._touch2_grabbed:
-            self._touch2_start = (touch.x, touch.y)
-            self._touch2_pos = (touch.x, touch.y)
-            self._touch2_grabbed = True
-            self._touch2_time = now
+        if self._t1_grabbed and not self._t2_grabbed:
+            self._t2_start = (touch.x, touch.y)
+            self._t2_pos = (touch.x, touch.y)
+            self._t2_time = now
+            self._t2_grabbed = True
             touch.grab(self)
             return True
 
-        if not self._touch1_grabbed:
-            self._touch1_start = (touch.x, touch.y)
-            self._touch1_pos = (touch.x, touch.y)
-            self._touch1_time = now
-            self._touch1_grabbed = True
+        if not self._t1_grabbed:
+            self._t1_start = (touch.x, touch.y)
+            self._t1_pos = (touch.x, touch.y)
+            self._t1_time = now
+            self._t1_grabbed = True
             self._is_dragging = False
-            self._smoothed_dx = 0
-            self._smoothed_dy = 0
+            self._smooth_dx = 0
+            self._smooth_dy = 0
             touch.grab(self)
         return True
 
     def on_touch_move(self, touch):
-        if touch.grab_current is self:
-            now = time.time()
+        if touch.grab_current is not self:
+            return super().on_touch_move(touch)
 
-            if self._touch2_grabbed and touch is not None:
-                if self._touch1_grabbed:
-                    if self._touch1_pos and self._touch2_pos:
-                        pass
-                if self._touch2_start:
-                    t2dx = touch.x - self._touch2_start[0]
-                    t2dy = touch.y - self._touch2_start[1]
-                    if abs(t2dx) > 15 or abs(t2dy) > 15:
-                        self._touch2_pos = (touch.x, touch.y)
-                return True
-
-            if self._touch1_pos:
-                dx = touch.x - self._touch1_pos[0]
-                dy = touch.y - self._touch1_pos[1]
-
-                if abs(dx) > self._move_threshold or abs(dy) > self._move_threshold:
-                    self._is_dragging = True
-
-                    if self.mode == self.MODE_TOUCH:
-                        self._smoothed_dx = self._smoothed_dx * (1 - self._smoothing) + dx * self._smoothing
-                        self._smoothed_dy = self._smoothed_dy * (1 - self._smoothing) + dy * self._smoothing
-                        screen_dx = int(self._smoothed_dx * self._move_sensitivity)
-                        screen_dy = int(-self._smoothed_dy * self._move_sensitivity)
-                    else:
-                        self._smoothed_dx = self._smoothed_dx * (1 - self._smoothing) + dx * self._smoothing
-                        self._smoothed_dy = self._smoothed_dy * (1 - self._smoothing) + dy * self._smoothing
-                        screen_dx = int(self._smoothed_dx * self._pointer_sensitivity)
-                        screen_dy = int(-self._smoothed_dy * self._pointer_sensitivity)
-
-                    if abs(screen_dx) >= 1 or abs(screen_dy) >= 1:
-                        self.client.send_mouse_move_relative(screen_dx, screen_dy)
-
-                self._touch1_pos = (touch.x, touch.y)
+        if self._t2_grabbed:
             return True
-        return super().on_touch_move(touch)
+
+        if self._t1_pos:
+            dx = touch.x - self._t1_pos[0]
+            dy = touch.y - self._t1_pos[1]
+
+            if abs(dx) > MOVE_THRESHOLD or abs(dy) > MOVE_THRESHOLD:
+                self._is_dragging = True
+
+                if self.mode == self.MODE_TOUCH:
+                    sens = TOUCH_SENSITIVITY
+                else:
+                    sens = POINTER_SENSITIVITY
+
+                self._smooth_dx = self._smooth_dx * (1 - SMOOTHING) + dx * SMOOTHING
+                self._smooth_dy = self._smooth_dy * (1 - SMOOTHING) + dy * SMOOTHING
+                screen_dx = int(self._smooth_dx * sens)
+                screen_dy = int(-self._smooth_dy * sens)
+
+                if abs(screen_dx) >= 1 or abs(screen_dy) >= 1:
+                    self.client.send_mouse_move_relative(screen_dx, screen_dy)
+
+            self._t1_pos = (touch.x, touch.y)
+        return True
 
     def on_touch_up(self, touch):
-        if touch.grab_current is self:
-            touch.ungrab(self)
-            now = time.time()
+        if touch.grab_current is not self:
+            return super().on_touch_up(touch)
 
-            if self._touch2_grabbed and self._touch2_start:
-                t2_start = self._touch2_start
-                t2_end = (touch.x, touch.y)
-                t2_dx = t2_end[0] - t2_start[0]
-                t2_dy = t2_end[1] - t2_start[1]
-                t2_dist = (t2_dx**2 + t2_dy**2) ** 0.5
-                t2_elapsed = max(0.01, now - self._touch2_time)
-                t2_velocity = t2_dist / t2_elapsed
+        touch.ungrab(self)
+        now = time.time()
 
-                if t2_dist > SWIPE_THRESHOLD and t2_velocity > SWIPE_VELOCITY:
-                    if abs(t2_dy) > abs(t2_dx):
-                        if t2_dy > 0:
-                            self._send_scroll(5)
-                        else:
-                            self._send_scroll(-5)
+        if self._t2_grabbed and self._t2_start:
+            t2_start = self._t2_start
+            t2_end = (touch.x, touch.y)
+            t2_dx = t2_end[0] - t2_start[0]
+            t2_dy = t2_end[1] - t2_start[1]
+            t2_dist = (t2_dx**2 + t2_dy**2) ** 0.5
+            t2_elapsed = max(0.01, now - self._t2_time)
+            t2_velocity = t2_dist / t2_elapsed
+
+            if t2_dist > SWIPE_THRESHOLD and t2_velocity > SWIPE_VELOCITY:
+                if abs(t2_dy) > abs(t2_dx):
+                    self._send_scroll(5 if t2_dy > 0 else -5)
+                else:
+                    if t2_dx > 0:
+                        self.client.send_hotkey("alt", "shift", "tab")
                     else:
-                        if t2_dx > 0:
-                            self.client.send_hotkey("alt", "shift", "tab")
-                        else:
-                            self.client.send_hotkey("alt", "tab")
-                elif t2_dist < 20:
+                        self.client.send_hotkey("alt", "tab")
+            elif t2_dist < 20:
+                if self.mode == self.MODE_TOUCH:
                     coords = self._get_screen_coords(t2_end[0], t2_end[1])
                     if coords:
                         self.client.send_mouse_click(coords[0], coords[1], "right")
-
-                self._touch2_start = None
-                self._touch2_pos = None
-                self._touch2_grabbed = False
-                self._touch1_start = None
-                self._touch1_pos = None
-                self._touch1_grabbed = False
-                self._is_dragging = False
-                return True
-
-            if self._touch1_start:
-                t1_start = self._touch1_start
-                t1_end = (touch.x, touch.y)
-                t1_dx = t1_end[0] - t1_start[0]
-                t1_dy = t1_end[1] - t1_start[1]
-                t1_dist = (t1_dx**2 + t1_dy**2) ** 0.5
-                t1_elapsed = max(0.01, now - self._touch1_time)
-                t1_velocity = t1_dist / t1_elapsed
-
-                if self.mode == self.MODE_TOUCH:
-                    if t1_dist > SWIPE_THRESHOLD and t1_velocity > SWIPE_VELOCITY:
-                        if abs(t1_dy) > abs(t1_dx):
-                            if t1_dy > 0:
-                                self._send_scroll(5)
-                            else:
-                                self._send_scroll(-5)
-                        else:
-                            if t1_dx > 0:
-                                self.client.send_hotkey("alt", "shift", "tab")
-                            else:
-                                self.client.send_hotkey("alt", "tab")
-                    elif not self._is_dragging:
-                        coords = self._get_screen_coords(t1_end[0], t1_end[1])
-                        if coords:
-                            self.client.send_mouse_click(coords[0], coords[1], "left")
                 else:
-                    if not self._is_dragging and t1_dist < 15:
-                        time_since_last = now - self._last_tap_time
-                        last_pos = self._last_tap_pos
-                        dist_from_last = 0
-                        if last_pos:
-                            dist_from_last = ((t1_end[0] - last_pos[0])**2 + (t1_end[1] - last_pos[1])**2) ** 0.5
+                    self.client.send_mouse_click(0, 0, "right")
 
-                        if time_since_last < DOUBLE_TAP_TIMEOUT and dist_from_last < 40:
-                            self.client.send_mouse_click(0, 0, "right")
-                            self._last_tap_time = 0
-                            self._last_tap_pos = None
-                        else:
-                            self.client.send_mouse_click(0, 0, "left")
-                            self._last_tap_time = now
-                            self._last_tap_pos = t1_end
-
-            self._touch1_start = None
-            self._touch1_pos = None
-            self._touch1_grabbed = False
-            self._is_dragging = False
-            self._smoothed_dx = 0
-            self._smoothed_dy = 0
+            self._reset_touches()
             return True
-        return super().on_touch_up(touch)
+
+        if self._t1_start:
+            t1_start = self._t1_start
+            t1_end = (touch.x, touch.y)
+            t1_dx = t1_end[0] - t1_start[0]
+            t1_dy = t1_end[1] - t1_start[1]
+            t1_dist = (t1_dx**2 + t1_dy**2) ** 0.5
+            t1_elapsed = max(0.01, now - self._t1_time)
+            t1_velocity = t1_dist / t1_elapsed
+
+            is_swipe = t1_dist > SWIPE_THRESHOLD and t1_velocity > SWIPE_VELOCITY
+
+            if self.mode == self.MODE_TOUCH:
+                if is_swipe:
+                    if abs(t1_dy) > abs(t1_dx):
+                        self._send_scroll(5 if t1_dy > 0 else -5)
+                    else:
+                        if t1_dx > 0:
+                            self.client.send_hotkey("alt", "shift", "tab")
+                        else:
+                            self.client.send_hotkey("alt", "tab")
+                elif not self._is_dragging:
+                    coords = self._get_screen_coords(t1_end[0], t1_end[1])
+                    if coords:
+                        self.client.send_mouse_click(coords[0], coords[1], "left")
+            else:
+                if not self._is_dragging and t1_dist < 15:
+                    time_since_last = now - self._last_tap_time
+                    dist_from_last = 0
+                    if self._last_tap_pos:
+                        dist_from_last = ((t1_end[0] - self._last_tap_pos[0])**2 +
+                                          (t1_end[1] - self._last_tap_pos[1])**2) ** 0.5
+
+                    if time_since_last < DOUBLE_TAP_TIMEOUT and dist_from_last < 40:
+                        self.client.send_mouse_click(0, 0, "right")
+                        self._last_tap_time = 0
+                        self._last_tap_pos = None
+                    else:
+                        self.client.send_mouse_click(0, 0, "left")
+                        self._last_tap_time = now
+                        self._last_tap_pos = t1_end
+
+        self._reset_touches()
+        return True
+
+    def _reset_touches(self):
+        self._t1_start = None
+        self._t1_pos = None
+        self._t1_grabbed = False
+        self._t2_start = None
+        self._t2_pos = None
+        self._t2_grabbed = False
+        self._is_dragging = False
+        self._smooth_dx = 0
+        self._smooth_dy = 0
 
     def _send_scroll(self, dy):
         if self.client and self.client.connected:
@@ -499,7 +515,13 @@ class ControlScreen(Screen):
         if not self.client or not self.client.connected:
             return False
 
-        if key == 8:
+        if key == 24 or key == 1073741952:
+            self.client.send_key_press("volumeup")
+            return True
+        elif key == 25 or key == 1073741953:
+            self.client.send_key_press("volumedown")
+            return True
+        elif key == 8:
             self.client.send_key_press("backspace")
             return True
         elif key == 13:
