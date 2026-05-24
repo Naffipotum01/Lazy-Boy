@@ -1526,9 +1526,13 @@ class LazyBoyApp(App):
         self.client.set_radio_status_callback(self._on_radio_status)
         self.client.set_radio_audio_callback(self._on_radio_audio)
         self.client.set_radio_phone_fm_callback(self._on_radio_phone_fm)
+        self.client.set_smart_point_callback(self._on_smart_point)
 
         self.radio_screen.client = self.client
         self.radio_screen.phone_radio = self.phone_radio
+
+        self._smart_point_on = True
+        self._smart_scan_event = None
 
         return self.sm
 
@@ -1552,7 +1556,15 @@ class LazyBoyApp(App):
             if hasattr(self, "_pending_device") and self._pending_device:
                 save_device(self._pending_device)
                 self._pending_device = None
+            self._smart_point_on = True
+            self.smart_btn.background_color = (0.6, 0.2, 0.6, 1)
+            Clock.schedule_once(lambda dt: self._do_smart_activate(), 1)
         if status in ("denied", "disconnected"):
+            self._smart_point_on = False
+            if self._smart_scan_event:
+                self._smart_scan_event.cancel()
+                self._smart_scan_event = None
+            self.smart_btn.background_color = (0.3, 0.3, 0.3, 1)
             Clock.schedule_once(lambda dt: self.show_discovery(), 2)
 
     def _open_radio(self, *args):
@@ -1584,25 +1596,43 @@ class LazyBoyApp(App):
             rs = self.manager.get_screen("radio")
             rs.status_label.text = f"Phone FM tuning: {freq} MHz"
 
+    def _do_smart_activate(self):
+        if not self.client or not self.client.connected:
+            return
+        if not self._smart_point_on:
+            return
+        self.smart_point.client = self.client
+        self.client.send({"type": "smart_point_activate"})
+
+    def _do_smart_scan_poll(self, dt=None):
+        if not self._smart_point_on or not self.client or not self.client.connected:
+            return
+        self.client.send({"type": "smart_point_scan"})
+        self._smart_scan_event = Clock.schedule_once(self._do_smart_scan_poll, 3)
+
     def _toggle_smart_point(self, *args):
         if not self.client or not self.client.connected:
             return
-        if self.smart_point._active:
+        self._smart_point_on = not self._smart_point_on
+        if self._smart_point_on:
+            self.smart_btn.background_color = (0.6, 0.2, 0.6, 1)
+            self._do_smart_activate()
+        else:
+            if self._smart_scan_event:
+                self._smart_scan_event.cancel()
+                self._smart_scan_event = None
             self.smart_point.dismiss()
             self.smart_btn.background_color = (0.3, 0.3, 0.3, 1)
             self.client.send({"type": "smart_point_dismiss"})
-        else:
-            self.smart_point.client = self.client
-            self.client.set_smart_point_callback(self._on_smart_point)
-            self.smart_btn.background_color = (0.6, 0.2, 0.6, 1)
-            self.client.send({"type": "smart_point_activate"})
 
     def _on_smart_point(self, predictions):
-        if predictions:
+        if predictions and self._smart_point_on:
             self.smart_point.show(predictions)
-        else:
+            if self._smart_scan_event:
+                self._smart_scan_event.cancel()
+            self._smart_scan_event = Clock.schedule_once(self._do_smart_scan_poll, 3)
+        elif not self._smart_point_on:
             self.smart_point.dismiss()
-            self.smart_btn.background_color = (0.3, 0.3, 0.3, 1)
 
     def on_stop(self):
         self.client.disconnect()
