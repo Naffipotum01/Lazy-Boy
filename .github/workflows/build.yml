@@ -15,6 +15,7 @@ jobs:
 
       - name: Setup SDK tools and licenses
         run: |
+          apt-get update -qq && apt-get install -y -qq curl unzip > /dev/null 2>&1
           SDK_ROOT=/github/home/.buildozer/android/platform/android-sdk
           mkdir -p $SDK_ROOT/licenses
           echo -e "\n24333f8a63b6825ea9c5514f83c2829b004d1fee" > $SDK_ROOT/licenses/android-sdk-license
