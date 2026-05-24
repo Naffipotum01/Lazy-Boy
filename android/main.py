@@ -632,6 +632,12 @@ class ControlScreen(Screen):
         settings_btn.bind(on_press=self._open_settings)
         top_bar.add_widget(settings_btn)
 
+        self.host_btn = Button(text="Host", size_hint_x=0.1,
+                               background_color=(0.3, 0.3, 0.3, 1),
+                               font_size=11)
+        self.host_btn.bind(on_press=self._toggle_host_mode)
+        top_bar.add_widget(self.host_btn)
+
         disconnect_btn = Button(text="X", size_hint_x=0.08,
                                  background_color=(0.7, 0.2, 0.2, 1),
                                  font_size=15, bold=True)
@@ -639,6 +645,9 @@ class ControlScreen(Screen):
         top_bar.add_widget(disconnect_btn)
 
         self.layout.add_widget(top_bar)
+
+        self._host_mode = False
+        self._host_capture_event = None
 
         self.mode_hint = Label(
             text="[b]TOUCH MODE[/b]  |  Tap = click  |  Swipe = scroll/switch",
@@ -696,6 +705,8 @@ class ControlScreen(Screen):
     def on_leave(self):
         Window.unbind(on_keyboard=self._on_keyboard)
         self.gamepad.cleanup()
+        if self._host_mode:
+            self._stop_host_mode()
 
     def update_frame(self, img_bytes):
         if not self._showing_screen:
@@ -972,6 +983,87 @@ class ControlScreen(Screen):
             fs.client = self.client
             self.manager.current = "file_browser"
 
+    def _toggle_host_mode(self, *args):
+        if self._host_mode:
+            self._stop_host_mode()
+        else:
+            self._start_host_mode()
+
+    def _start_host_mode(self):
+        if not self.client or not self.client.connected:
+            return
+        self._host_mode = True
+        self.host_btn.background_color = (0.8, 0.3, 0.1, 1)
+        self.host_btn.text = "Host ON"
+
+        self.client.set_phone_tap_callback(self._on_phone_tap)
+        self.client.set_phone_back_callback(self._on_phone_back)
+        self.client.set_phone_volume_callback(self._on_phone_volume)
+        self.client.send_enter_host_mode()
+        self._host_capture_event = Clock.schedule_interval(self._capture_phone_frame, 0.15)
+
+        self.mode_hint.text = "[b]HOST MODE[/b]  |  PC can see and touch this phone"
+
+    def _stop_host_mode(self):
+        self._host_mode = False
+        self.host_btn.background_color = (0.3, 0.3, 0.3, 1)
+        self.host_btn.text = "Host"
+
+        if self._host_capture_event:
+            self._host_capture_event.cancel()
+            self._host_capture_event = None
+
+        self.client.set_phone_tap_callback(None)
+        self.client.set_phone_back_callback(None)
+        self.client.set_phone_volume_callback(None)
+        self.client.send_exit_host_mode()
+        self._restore_hint()
+
+    def _capture_phone_frame(self, dt):
+        if not self._host_mode or not self.client or not self.client.connected:
+            return
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["screencap", "-p"],
+                capture_output=True, timeout=2
+            )
+            if result.returncode == 0 and len(result.stdout) > 100:
+                self.client.send_phone_frame(result.stdout)
+        except Exception:
+            pass
+
+    def _on_phone_tap(self, x, y):
+        try:
+            import subprocess
+            subprocess.run(
+                ["input", "tap", str(x), str(y)],
+                capture_output=True, timeout=2
+            )
+        except Exception:
+            pass
+
+    def _on_phone_back(self):
+        try:
+            import subprocess
+            subprocess.run(
+                ["input", "keyevent", "KEYCODE_BACK"],
+                capture_output=True, timeout=2
+            )
+        except Exception:
+            pass
+
+    def _on_phone_volume(self, direction):
+        try:
+            import subprocess
+            key = "KEYCODE_VOLUME_UP" if direction == "up" else "KEYCODE_VOLUME_DOWN"
+            subprocess.run(
+                ["input", "keyevent", key],
+                capture_output=True, timeout=2
+            )
+        except Exception:
+            pass
+
     def _open_settings(self, *args):
         if self.manager and hasattr(self.manager, "get_screen"):
             self.manager.current = "settings"
@@ -1066,6 +1158,8 @@ class ControlScreen(Screen):
         return False
 
     def _disconnect(self, *args):
+        if self._host_mode:
+            self._stop_host_mode()
         self.gamepad.cleanup()
         if self.client:
             self.client.disconnect()

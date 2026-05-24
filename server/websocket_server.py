@@ -8,6 +8,7 @@ from input_handler import InputHandler
 from approval import ApprovalDialog
 from clipboard_sync import ClipboardSync
 from tablet_mode import set_tablet_mode, is_tablet_mode
+from phone_viewer import PhoneViewer
 
 WS_PORT = 8765
 FS_PORT = 8766
@@ -26,6 +27,8 @@ class ControlServer:
 
         self.clipboard = ClipboardSync(on_change_callback=self._on_clipboard_change)
         self._tablet_was_on = None
+        self._phone_viewer = None
+        self._phone_ws = None
 
     async def _handler(self, websocket):
         addr = websocket.remote_address
@@ -67,6 +70,7 @@ class ControlServer:
             async for message in websocket:
                 try:
                     data = json.loads(message)
+                    data["_ws"] = websocket
                     self._handle_command(data)
                 except json.JSONDecodeError:
                     pass
@@ -76,6 +80,8 @@ class ControlServer:
             sender_task.cancel()
             self.connected.discard(websocket)
             print(f"[-] Disconnected: {ip}")
+            if websocket == self._phone_ws:
+                self._stop_phone_viewer()
             if len(self.connected) == 0 and self._tablet_was_on is not None:
                 if not self._tablet_was_on:
                     print("[*] Restoring desktop mode")
@@ -95,6 +101,28 @@ class ControlServer:
                 await asyncio.sleep(0.033)
         except (websockets.ConnectionClosed, asyncio.CancelledError):
             pass
+
+    def _start_phone_viewer(self):
+        if self._phone_viewer:
+            return
+        self._phone_viewer = PhoneViewer(send_callback=self._send_to_phone)
+        self._phone_viewer.start()
+
+    def _stop_phone_viewer(self):
+        if self._phone_viewer:
+            self._phone_viewer.stop()
+            self._phone_viewer = None
+        self._phone_ws = None
+
+    def _send_to_phone(self, msg):
+        ws = self._phone_ws
+        if ws:
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    ws.send(json.dumps(msg)), self.loop
+                )
+            except Exception:
+                pass
 
     def _broadcast(self, msg):
         if not self.connected:
@@ -215,6 +243,28 @@ class ControlServer:
                     os.makedirs(dest, exist_ok=True)
                 except Exception:
                     pass
+
+        elif cmd == "enter_host_mode":
+            self._phone_ws = data.get("_ws", None)
+            self._start_phone_viewer()
+
+        elif cmd == "phone_frame":
+            if self._phone_viewer:
+                import base64
+                jpg = base64.b64decode(data["data"])
+                self._phone_viewer.update_frame(jpg)
+
+        elif cmd == "phone_exit_host":
+            self._stop_phone_viewer()
+
+        elif cmd == "phone_tap":
+            self._send_to_phone({"type": "phone_tap", "x": data["x"], "y": data["y"]})
+
+        elif cmd == "phone_back":
+            self._send_to_phone({"type": "phone_back"})
+
+        elif cmd == "phone_volume":
+            self._send_to_phone({"type": "phone_volume", "direction": data["direction"]})
 
     def _list_files(self, path):
         import os

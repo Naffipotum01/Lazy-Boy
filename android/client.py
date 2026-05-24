@@ -25,6 +25,9 @@ class ControlClient:
         self._clipboard_callback = None
         self._file_list_callback = None
         self._file_server_callback = None
+        self._phone_tap_callback = None
+        self._phone_back_callback = None
+        self._phone_volume_callback = None
         self._thread = None
 
     def set_frame_callback(self, callback):
@@ -41,6 +44,15 @@ class ControlClient:
 
     def set_file_server_callback(self, callback):
         self._file_server_callback = callback
+
+    def set_phone_tap_callback(self, callback):
+        self._phone_tap_callback = callback
+
+    def set_phone_back_callback(self, callback):
+        self._phone_back_callback = callback
+
+    def set_phone_volume_callback(self, callback):
+        self._phone_volume_callback = callback
 
     def connect(self, ip):
         if self.connected:
@@ -104,6 +116,18 @@ class ControlClient:
             elif msg_type == "file_server_started":
                 if self._file_server_callback:
                     self._file_server_callback(data.get("host"), data.get("port"))
+
+            elif msg_type == "phone_tap":
+                if self._phone_tap_callback:
+                    self._phone_tap_callback(data["x"], data["y"])
+
+            elif msg_type == "phone_back":
+                if self._phone_back_callback:
+                    self._phone_back_callback()
+
+            elif msg_type == "phone_volume":
+                if self._phone_volume_callback:
+                    self._phone_volume_callback(data.get("direction", "up"))
 
         except Exception:
             pass
@@ -179,6 +203,19 @@ class ControlClient:
 
     def send_file_stop(self):
         self.send({"type": "file_stop"})
+
+    def send_enter_host_mode(self):
+        self.send({"type": "enter_host_mode"})
+
+    def send_exit_host_mode(self):
+        self.send({"type": "phone_exit_host"})
+
+    def send_phone_frame(self, jpg_bytes):
+        import base64
+        self.send({
+            "type": "phone_frame",
+            "data": base64.b64encode(jpg_bytes).decode()
+        })
 
     def disconnect(self):
         self.connected = False
