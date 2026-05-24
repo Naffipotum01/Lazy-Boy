@@ -28,6 +28,7 @@ from key_bindings import load_bindings
 from settings_screen import KeyBindingsScreen
 from file_browser import FileBrowserScreen
 from saved_devices import load_saved, save_device, forget_device
+from voice import VoiceController
 
 SWIPE_THRESHOLD = 60
 SWIPE_VELOCITY = 250
@@ -678,6 +679,24 @@ class ControlScreen(Screen):
         keyboard_btn.bind(on_press=self._show_keyboard)
         top_bar.add_widget(keyboard_btn)
 
+        self.voice_btn = Button(text="🎤", size_hint_x=0.1,
+                                background_color=(0.4, 0.2, 0.6, 1),
+                                font_size=16)
+        self.voice_btn.bind(on_press=self._voice_press)
+        top_bar.add_widget(self.voice_btn)
+
+        self.audio_mic_btn = Button(text="Mic➡", size_hint_x=0.1,
+                                    background_color=(0.3, 0.3, 0.3, 1),
+                                    font_size=9)
+        self.audio_mic_btn.bind(on_press=self._toggle_phone_mic)
+        top_bar.add_widget(self.audio_mic_btn)
+
+        self.audio_speaker_btn = Button(text="⬅Spk", size_hint_x=0.1,
+                                        background_color=(0.3, 0.3, 0.3, 1),
+                                        font_size=9)
+        self.audio_speaker_btn.bind(on_press=self._toggle_pc_mic)
+        top_bar.add_widget(self.audio_speaker_btn)
+
         settings_btn = Button(text="Bind", size_hint_x=0.1,
                               background_color=(0.5, 0.3, 0.7, 1),
                               font_size=11, bold=True)
@@ -700,6 +719,7 @@ class ControlScreen(Screen):
 
         self._host_mode = False
         self._host_capture_event = None
+        self.voice = VoiceController(app=None, client=None)
 
         self.mode_hint = Label(
             text="[b]TOUCH MODE[/b]  |  Tap = click  |  Swipe = scroll/switch",
@@ -753,12 +773,19 @@ class ControlScreen(Screen):
             self.status_label.text = "Connected"
             Window.bind(on_keyboard=self._on_keyboard)
             self.client.set_clipboard_callback(self._on_clipboard_push)
+            self.client.set_voice_options_callback(self._on_voice_options)
 
     def on_leave(self):
         Window.unbind(on_keyboard=self._on_keyboard)
         self.gamepad.cleanup()
         if self._host_mode:
             self._stop_host_mode()
+        if getattr(self, '_phone_mic_on', False):
+            self._phone_mic_on = False
+            self.client and self.client.send({"type": "audio_speaker_stop"})
+        if getattr(self, '_pc_mic_on', False):
+            self._pc_mic_on = False
+            self.client and self.client.send({"type": "audio_mic_stop"})
 
     def update_frame(self, img_bytes):
         if not self._showing_screen:
@@ -1115,6 +1142,80 @@ class ControlScreen(Screen):
             )
         except Exception:
             pass
+
+    def _voice_press(self, *args):
+        if not self.client or not self.client.connected:
+            return
+        self.voice.client = self.client
+        self.voice.app = self.app_ref
+        self.voice_btn.background_color = (0.8, 0.5, 0.1, 1)
+        Clock.schedule_once(lambda dt: self.voice.start_listening(
+            callback=self._on_voice_result
+        ), 0.1)
+
+    def _on_voice_result(self, text):
+        self.voice_btn.background_color = (0.4, 0.2, 0.6, 1)
+        if text and self.client and self.client.connected:
+            if text.startswith("err:"):
+                self.mode_hint.text = f"[b]Voice Error[/b]  |  {text[4:]}"
+                Clock.schedule_once(lambda dt: self._restore_hint(), 3)
+                return
+            self.mode_hint.text = f"[b]{text}[/b]  |  Sending to PC..."
+            self.client.send_voice_result(text)
+        elif not text:
+            self.mode_hint.text = "[b]Voice cancelled[/b]"
+
+    def _toggle_phone_mic(self, *args):
+        if not self.client or not self.client.connected:
+            return
+        if hasattr(self, '_phone_mic_on') and self._phone_mic_on:
+            self._phone_mic_on = False
+            self.audio_mic_btn.background_color = (0.3, 0.3, 0.3, 1)
+            self.client.send({"type": "audio_speaker_stop"})
+            self.mode_hint.text = "[b]MIC OFF[/b]  |  Phone mic → PC stopped"
+        else:
+            self._phone_mic_on = True
+            self.audio_mic_btn.background_color = (0.2, 0.7, 0.2, 1)
+            self.client.send({"type": "audio_speaker_start"})
+            self.mode_hint.text = "[b]MIC ON[/b]  |  Speaking through PC speakers"
+        Clock.schedule_once(lambda dt: self._restore_hint(), 3)
+
+    def _toggle_pc_mic(self, *args):
+        if not self.client or not self.client.connected:
+            return
+        if hasattr(self, '_pc_mic_on') and self._pc_mic_on:
+            self._pc_mic_on = False
+            self.audio_speaker_btn.background_color = (0.3, 0.3, 0.3, 1)
+            self.client.send({"type": "audio_mic_stop"})
+            self.mode_hint.text = "[b]PC MIC OFF[/b]  |  PC mic → Phone stopped"
+        else:
+            self._pc_mic_on = True
+            self.audio_speaker_btn.background_color = (0.7, 0.2, 0.2, 1)
+            self.client.send({"type": "audio_mic_start"})
+            self.client.set_audio_callback(self._on_pc_audio)
+            self.mode_hint.text = "[b]PC MIC ON[/b]  |  Listening to PC mic on phone"
+        Clock.schedule_once(lambda dt: self._restore_hint(), 3)
+
+    def _on_pc_audio(self, pcm_bytes):
+        try:
+            if not hasattr(self, '_phone_audio'):
+                from phone_audio import PhoneAudio
+                self._phone_audio = PhoneAudio()
+            self._phone_audio.write_audio(pcm_bytes)
+        except Exception:
+            pass
+
+    def _on_voice_options(self, options, prompt):
+        self.voice.app = self.app_ref
+        self.voice.client = self.client
+        self.voice.show_options(
+            options, prompt,
+            on_select=lambda opt: self._on_option_picked(opt)
+        )
+
+    def _on_option_picked(self, opt):
+        self.mode_hint.text = f"[b]Selected:[/b] {opt.get('label', opt['id'])}"
+        Clock.schedule_once(lambda dt: self._restore_hint(), 3)
 
     def _open_settings(self, *args):
         if self.manager and hasattr(self.manager, "get_screen"):

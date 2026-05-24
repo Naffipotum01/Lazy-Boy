@@ -9,6 +9,8 @@ from approval import ApprovalDialog
 from clipboard_sync import ClipboardSync
 from tablet_mode import set_tablet_mode, is_tablet_mode
 from phone_viewer import PhoneViewer
+from voice_commands import VoiceCommandHandler
+from audio_stream import AudioStreamer
 
 WS_PORT = 8765
 FS_PORT = 8766
@@ -29,6 +31,10 @@ class ControlServer:
         self._tablet_was_on = None
         self._phone_viewer = None
         self._phone_ws = None
+        self.voice = VoiceCommandHandler(input_handler)
+        self.audio = AudioStreamer()
+        self._audio_mic_on = False
+        self._audio_speaker_on = False
 
     async def _handler(self, websocket):
         addr = websocket.remote_address
@@ -113,6 +119,20 @@ class ControlServer:
             self._phone_viewer.stop()
             self._phone_viewer = None
         self._phone_ws = None
+
+    def _send_pc_audio(self, pcm_bytes):
+        import base64
+        self._send_to_phone({
+            "type": "pc_audio",
+            "data": base64.b64encode(pcm_bytes).decode(),
+        })
+
+    def _send_options(self, options, prompt):
+        self._send_to_phone({
+            "type": "voice_options",
+            "options": options,
+            "prompt": prompt or "Choose an option:",
+        })
 
     def _send_to_phone(self, msg):
         ws = self._phone_ws
@@ -265,6 +285,40 @@ class ControlServer:
 
         elif cmd == "phone_volume":
             self._send_to_phone({"type": "phone_volume", "direction": data["direction"]})
+
+        elif cmd == "voice_result":
+            text = data.get("text", "")
+            result = self.voice.execute(text, options_callback=self._send_options)
+            if result.get("options"):
+                self._send_to_phone({
+                    "type": "voice_options",
+                    "options": result["options"],
+                    "prompt": result.get("prompt", "Choose:"),
+                })
+
+        elif cmd == "voice_option_picked":
+            opt_id = data.get("option_id", 0)
+            self.voice.click_option(opt_id)
+
+        elif cmd == "phone_audio":
+            import base64
+            self.audio.write_audio(base64.b64decode(data["data"]))
+
+        elif cmd == "audio_mic_start":
+            self._audio_mic_on = True
+            self.audio.start_capture(send_callback=self._send_pc_audio)
+
+        elif cmd == "audio_mic_stop":
+            self._audio_mic_on = False
+            self.audio.stop()
+
+        elif cmd == "audio_speaker_start":
+            self._audio_speaker_on = True
+            self.audio.start_playback()
+
+        elif cmd == "audio_speaker_stop":
+            self._audio_speaker_on = False
+            self.audio.stop()
 
     def _list_files(self, path):
         import os

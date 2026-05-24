@@ -28,6 +28,8 @@ class ControlClient:
         self._phone_tap_callback = None
         self._phone_back_callback = None
         self._phone_volume_callback = None
+        self._voice_options_callback = None
+        self._audio_callback = None
         self._thread = None
 
     def set_frame_callback(self, callback):
@@ -52,6 +54,12 @@ class ControlClient:
         self._phone_back_callback = callback
 
     def set_phone_volume_callback(self, callback):
+
+    def set_voice_options_callback(self, callback):
+
+    def set_audio_callback(self, callback):
+        self._audio_callback = callback
+        self._voice_options_callback = callback
         self._phone_volume_callback = callback
 
     def connect(self, ip):
@@ -128,6 +136,17 @@ class ControlClient:
             elif msg_type == "phone_volume":
                 if self._phone_volume_callback:
                     self._phone_volume_callback(data.get("direction", "up"))
+
+            elif msg_type == "voice_options":
+                if self._voice_options_callback:
+                    self._voice_options_callback(data.get("options", []),
+                                                  data.get("prompt", ""))
+
+            elif msg_type == "pc_audio":
+                if self._audio_callback:
+                    import base64
+                    pcm = base64.b64decode(data["data"])
+                    self._audio_callback(pcm)
 
         except Exception:
             pass
@@ -209,6 +228,17 @@ class ControlClient:
 
     def send_exit_host_mode(self):
         self.send({"type": "phone_exit_host"})
+
+    def send_voice_result(self, text):
+        if text:
+            self.send({"type": "voice_result", "text": text})
+
+    def send_phone_audio(self, pcm_bytes):
+        import base64
+        self.send({
+            "type": "phone_audio",
+            "data": base64.b64encode(pcm_bytes).decode(),
+        })
 
     def send_phone_frame(self, jpg_bytes):
         import base64

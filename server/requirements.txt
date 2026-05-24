@@ -6,3 +6,6 @@ pyperclip>=1.8
 # Optional: pip install miniupnpc (requires C build tools)
 # Enables automatic UPnP port forwarding for remote access
 # miniupnpc>=2.0
+# Optional: pip install pyaudio (requires build tools on Windows)
+# Enables phone-as-wireless-mic and PC-audio-to-phone streaming
+# pyaudio>=0.2
