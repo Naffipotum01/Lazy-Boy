@@ -24,7 +24,7 @@ jobs:
           echo -e "\n33b6a2b64607f11b759f320ef9dff4ae5c47d97a" >> $SDK_ROOT/licenses/android-sdk-license
           mkdir -p $SDK_ROOT/cmdline-tools
           cd /tmp
-          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdtools.zip
+          curl -sL https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -o cmdtools.zip
           unzip -q cmdtools.zip -d $SDK_ROOT/cmdline-tools
           mv $SDK_ROOT/cmdline-tools/cmdline-tools $SDK_ROOT/cmdline-tools/latest
           mkdir -p $SDK_ROOT/tools/bin
