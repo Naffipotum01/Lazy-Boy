@@ -22,6 +22,9 @@ class ControlClient:
         self.approved = False
         self._frame_callback = None
         self._status_callback = None
+        self._clipboard_callback = None
+        self._file_list_callback = None
+        self._file_server_callback = None
         self._thread = None
 
     def set_frame_callback(self, callback):
@@ -29,6 +32,15 @@ class ControlClient:
 
     def set_status_callback(self, callback):
         self._status_callback = callback
+
+    def set_clipboard_callback(self, callback):
+        self._clipboard_callback = callback
+
+    def set_file_list_callback(self, callback):
+        self._file_list_callback = callback
+
+    def set_file_server_callback(self, callback):
+        self._file_server_callback = callback
 
     def connect(self, ip):
         if self.connected:
@@ -77,6 +89,18 @@ class ControlClient:
                 if self._frame_callback and self.approved:
                     img_data = base64.b64decode(data["data"])
                     self._frame_callback(img_data)
+
+            elif msg_type == "clipboard_push":
+                if self._clipboard_callback:
+                    self._clipboard_callback(data["text"])
+
+            elif msg_type == "file_list_result":
+                if self._file_list_callback:
+                    self._file_list_callback(data)
+
+            elif msg_type == "file_server_started":
+                if self._file_server_callback:
+                    self._file_server_callback(data.get("host"), data.get("port"))
 
         except Exception:
             pass
@@ -138,8 +162,24 @@ class ControlClient:
     def send_resolution(self, width, height):
         self.send({"type": "set_resolution", "width": width, "height": height})
 
+    def send_clipboard_set(self, text):
+        self.send({"type": "clipboard_set", "text": text})
+
+    def send_clipboard_get(self):
+        self.send({"type": "clipboard_get"})
+
+    def send_file_list(self, path="."):
+        self.send({"type": "file_list", "path": path})
+
+    def send_file_serve(self, port=8766):
+        self.send({"type": "file_serve", "port": port})
+
+    def send_file_stop(self):
+        self.send({"type": "file_stop"})
+
     def disconnect(self):
-        if self.ws:
+        self.connected = False
+        if self.ws and self.thread:
             try:
                 self.ws.close()
             except Exception:

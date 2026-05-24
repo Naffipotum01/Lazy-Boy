@@ -9,19 +9,24 @@ from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.image import Image as KivyImage
 from kivy.uix.floatlayout import FloatLayout
+from kivy.uix.widget import Widget
 from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.clock import Clock
-from kivy.graphics import Color, Rectangle, Line
+from kivy.graphics import Color, Rectangle, Ellipse, Line
 from kivy.core.image import Image as CoreImage
 from kivy.core.window import Window
 from kivy.metrics import dp
 from io import BytesIO
 import time
+import math
 
 from discovery import NetworkDiscovery
 from client import ControlClient
+from key_bindings import load_bindings
+from settings_screen import KeyBindingsScreen
+from file_browser import FileBrowserScreen
 
 SWIPE_THRESHOLD = 60
 SWIPE_VELOCITY = 250
@@ -30,6 +35,336 @@ POINTER_SENSITIVITY = 2.5
 TOUCH_SENSITIVITY = 1.6
 SMOOTHING = 0.45
 MOVE_THRESHOLD = 1
+
+
+class VirtualJoystick(Widget):
+    def __init__(self, size_val=dp(140), deadzone=0.15, **kwargs):
+        super().__init__(**kwargs)
+        self.size_hint = (None, None)
+        self.size = (size_val, size_val)
+        self.base_radius = size_val / 2
+        self.thumb_radius = size_val / 4
+        self.deadzone = deadzone
+        self.norm_x = 0.0
+        self.norm_y = 0.0
+        self._touch_id = None
+        self._touch_pos = None
+        self._update_event = None
+        self._draw_base()
+
+    def _draw_base(self):
+        self.canvas.clear()
+        with self.canvas:
+            Color(1, 1, 1, 0.12)
+            Ellipse(pos=self.pos, size=self.size)
+            Color(1, 1, 1, 0.06)
+            Line(circle=(self.center_x, self.center_y, self.base_radius), width=dp(2))
+            Color(1, 1, 1, 0.4)
+            self._thumb = Ellipse(
+                pos=(self.center_x - self.thumb_radius, self.center_y - self.thumb_radius),
+                size=(self.thumb_radius * 2, self.thumb_radius * 2)
+            )
+
+    def _update_thumb(self, tx, ty):
+        dx = tx - self.center_x
+        dy = ty - self.center_y
+        dist = math.sqrt(dx * dx + dy * dy)
+        max_dist = self.base_radius - self.thumb_radius
+
+        if dist > max_dist:
+            dx = dx / dist * max_dist
+            dy = dy / dist * max_dist
+            dist = max_dist
+
+        normalized = dist / max_dist if max_dist > 0 else 0
+        if normalized < self.deadzone:
+            self.norm_x = 0.0
+            self.norm_y = 0.0
+            thumb_x = self.center_x - self.thumb_radius
+            thumb_y = self.center_y - self.thumb_radius
+        else:
+            self.norm_x = dx / max_dist
+            self.norm_y = dy / max_dist
+            thumb_x = self.center_x + dx - self.thumb_radius
+            thumb_y = self.center_y + dy - self.thumb_radius
+
+        self._thumb.pos = (thumb_x, thumb_y)
+
+    def _reset_thumb(self):
+        self.norm_x = 0.0
+        self.norm_y = 0.0
+        self._thumb.pos = (
+            self.center_x - self.thumb_radius,
+            self.center_y - self.thumb_radius
+        )
+
+    def on_touch_down(self, touch):
+        if self._touch_id is not None:
+            return False
+        if not self.collide_point(touch.x, touch.y):
+            return False
+        self._touch_id = touch.uid
+        self._touch_pos = (touch.x, touch.y)
+        self._update_thumb(touch.x, touch.y)
+        touch.grab(self)
+        return True
+
+    def on_touch_move(self, touch):
+        if touch.uid != self._touch_id:
+            return False
+        self._touch_pos = (touch.x, touch.y)
+        self._update_thumb(touch.x, touch.y)
+        return True
+
+    def on_touch_up(self, touch):
+        if touch.uid != self._touch_id:
+            return False
+        touch.ungrab(self)
+        self._touch_id = None
+        self._touch_pos = None
+        self._reset_thumb()
+        return True
+
+    def on_pos(self, *args):
+        self._draw_base()
+
+    def on_size(self, *args):
+        self._draw_base()
+
+
+class GamepadButton(Widget):
+    def __init__(self, label="", key="", color=(1, 1, 1, 0.25),
+                 text_color=(1, 1, 1, 0.9), size_val=dp(52), **kwargs):
+        super().__init__(**kwargs)
+        self.size_hint = (None, None)
+        self.size = (size_val, size_val)
+        self.label = label
+        self.key = key
+        self.btn_color = color
+        self.text_color = text_color
+        self._touch_id = None
+        self._pressed = False
+        self.client = None
+        self._draw_btn(pressed=False)
+
+    def _draw_btn(self, pressed=False):
+        self.canvas.clear()
+        with self.canvas:
+            if pressed:
+                Color(*self.btn_color[:3], min(1, self.btn_color[3] + 0.3))
+            else:
+                Color(*self.btn_color)
+            Ellipse(pos=self.pos, size=self.size)
+
+        if self.label:
+            lbl = Label(
+                text=f"[b]{self.label}[/b]",
+                markup=True, font_size=self.size[0] * 0.35,
+                halign="center", valign="center",
+                size=self.size, pos=self.pos,
+                color=self.text_color
+            )
+            lbl.bind(size=lbl.setter("text_size"))
+
+    def on_touch_down(self, touch):
+        if self._touch_id is not None:
+            return False
+        if not self.collide_point(touch.x, touch.y):
+            return False
+        self._touch_id = touch.uid
+        self._pressed = True
+        self._draw_btn(pressed=True)
+        if self.key and self.client:
+            self.client.send_key_down(self.key)
+        touch.grab(self)
+        return True
+
+    def on_touch_move(self, touch):
+        if touch.uid != self._touch_id:
+            return False
+        return True
+
+    def on_touch_up(self, touch):
+        if touch.uid != self._touch_id:
+            return False
+        touch.ungrab(self)
+        self._touch_id = None
+        self._pressed = False
+        self._draw_btn(pressed=False)
+        if self.key and self.client:
+            self.client.send_key_up(self.key)
+        return True
+
+    def on_pos(self, *args):
+        self._draw_btn(self._pressed)
+
+    def on_size(self, *args):
+        self._draw_btn(self._pressed)
+
+
+class GamepadOverlay(FloatLayout):
+    def __init__(self, client=None, **kwargs):
+        super().__init__(**kwargs)
+        self.client = client
+        self._input_event = None
+
+        self.left_stick = VirtualJoystick(size_val=dp(130))
+        self.add_widget(self.left_stick)
+
+        self.right_stick = VirtualJoystick(size_val=dp(130))
+        self.add_widget(self.right_stick)
+
+        self.btn_a = GamepadButton("A", "space", (0.2, 0.7, 0.2, 0.35), size_val=dp(54))
+        self.btn_b = GamepadButton("B", "lctrl", (0.8, 0.2, 0.2, 0.35), size_val=dp(54))
+        self.btn_x = GamepadButton("X", "e", (0.2, 0.4, 0.9, 0.35), size_val=dp(54))
+        self.btn_y = GamepadButton("Y", "r", (0.9, 0.8, 0.1, 0.35), size_val=dp(54))
+
+        for btn in (self.btn_a, self.btn_b, self.btn_x, self.btn_y):
+            self.add_widget(btn)
+
+        self.btn_lb = GamepadButton("LB", "q", (0.5, 0.5, 0.5, 0.3), size_val=dp(50))
+        self.btn_rb = GamepadButton("RB", "tab", (0.5, 0.5, 0.5, 0.3), size_val=dp(50))
+        self.btn_lt = GamepadButton("LT", "rightmouse", (0.4, 0.4, 0.4, 0.3), size_val=dp(50))
+        self.btn_rt = GamepadButton("RT", "leftmouse", (0.6, 0.3, 0.3, 0.35), size_val=dp(50))
+
+        for btn in (self.btn_lb, self.btn_rb, self.btn_lt, self.btn_rt):
+            self.add_widget(btn)
+
+        self.btn_dup = GamepadButton("^", "up", (0.4, 0.4, 0.4, 0.3), dp(44))
+        self.btn_ddown = GamepadButton("v", "down", (0.4, 0.4, 0.4, 0.3), dp(44))
+        self.btn_dleft = GamepadButton("<", "left", (0.4, 0.4, 0.4, 0.3), dp(44))
+        self.btn_dright = GamepadButton(">", "right", (0.4, 0.4, 0.4, 0.3), dp(44))
+
+        for btn in (self.btn_dup, self.btn_ddown, self.btn_dleft, self.btn_dright):
+            self.add_widget(btn)
+
+        self.bind(pos=self._layout, size=self._layout)
+        self._layout()
+
+    def set_client(self, client):
+        self.client = client
+        self.left_stick.client = client
+        self.right_stick.client = client
+        for child in self.children:
+            if isinstance(child, GamepadButton):
+                child.client = client
+
+    def apply_bindings(self, bindings):
+        mapping = {
+            self.btn_a: "A", self.btn_b: "B", self.btn_x: "X", self.btn_y: "Y",
+            self.btn_lb: "LB", self.btn_rb: "RB", self.btn_lt: "LT", self.btn_rt: "RT",
+            self.btn_dup: "DUP", self.btn_ddown: "DDOWN",
+            self.btn_dleft: "DLEFT", self.btn_dright: "DRIGHT",
+        }
+        for btn, name in mapping.items():
+            if name in bindings and bindings[name]:
+                btn.key = bindings[name]
+
+    def _layout(self, *args):
+        w, h = self.size
+        ox, oy = self.pos
+
+        ls_size = self.left_stick.size[0]
+        rs_size = self.right_stick.size[0]
+
+        ls_cx = ox + w * 0.18
+        ls_cy = oy + h * 0.30
+        self.left_stick.center = (ls_cx, ls_cy)
+
+        rs_cx = ox + w * 0.82
+        rs_cy = oy + h * 0.30
+        self.right_stick.center = (rs_cx, rs_cy)
+
+        abxy_cx = rs_cx
+        abxy_cy = oy + h * 0.62
+        abxy_spread = dp(36)
+        self.btn_a.center = (abxy_cx, abxy_cy - abxy_spread)
+        self.btn_b.center = (abxy_cx + abxy_spread, abxy_cy)
+        self.btn_x.center = (abxy_cx - abxy_spread, abxy_cy)
+        self.btn_y.center = (abxy_cx, abxy_cy + abxy_spread)
+
+        dpad_cx = ls_cx
+        dpad_cy = oy + h * 0.62
+        dpad_spread = dp(28)
+        self.btn_dup.center = (dpad_cx, dpad_cy + dpad_spread)
+        self.btn_ddown.center = (dpad_cx, dpad_cy - dpad_spread)
+        self.btn_dleft.center = (dpad_cx - dpad_spread, dpad_cy)
+        self.btn_dright.center = (dpad_cx + dpad_spread, dpad_cy)
+
+        trigger_y = oy + h * 0.85
+        bumper_y = oy + h * 0.75
+        self.btn_lt.center = (ox + w * 0.12, trigger_y)
+        self.btn_rt.center = (ox + w * 0.88, trigger_y)
+        self.btn_lb.center = (ox + w * 0.12, bumper_y)
+        self.btn_rb.center = (ox + w * 0.88, bumper_y)
+
+    def start_input_loop(self):
+        if self._input_event:
+            return
+        self._input_event = Clock.schedule_interval(self._send_stick_input, 0.02)
+
+    def stop_input_loop(self):
+        if self._input_event:
+            self._input_event.cancel()
+            self._input_event = None
+
+    def _send_stick_input(self, dt):
+        if not self.client:
+            return
+
+        lsx = self.left_stick.norm_x
+        lsy = self.left_stick.norm_y
+        ls_deadzone = 0.2
+
+        if abs(lsx) > ls_deadzone or abs(lsy) > ls_deadzone:
+            self._send_wasd(lsx, lsy)
+        else:
+            self._release_wasd()
+
+        rsx = self.right_stick.norm_x
+        rsy = self.right_stick.norm_y
+        rs_deadzone = 0.2
+        rs_sensitivity = 12
+
+        if abs(rsx) > rs_deadzone or abs(rsy) > rs_deadzone:
+            mdx = int(rsx * rs_sensitivity)
+            mdy = int(-rsy * rs_sensitivity)
+            if abs(mdx) >= 1 or abs(mdy) >= 1:
+                self.client.send_mouse_move_relative(mdx, mdy)
+
+    def _send_wasd(self, x, y):
+        if not self.client:
+            return
+        keys = []
+        threshold = 0.3
+        if y > threshold:
+            keys.append("w")
+        elif y < -threshold:
+            keys.append("s")
+        if x < -threshold:
+            keys.append("a")
+        elif x > threshold:
+            keys.append("d")
+
+        if hasattr(self, '_held_wasd'):
+            for k in self._held_wasd:
+                if k not in keys:
+                    self.client.send_key_up(k)
+        for k in keys:
+            if not hasattr(self, '_held_wasd') or k not in self._held_wasd:
+                self.client.send_key_down(k)
+        self._held_wasd = keys
+
+    def _release_wasd(self):
+        if hasattr(self, '_held_wasd') and self._held_wasd:
+            for k in self._held_wasd:
+                if self.client:
+                    self.client.send_key_up(k)
+            self._held_wasd = []
+
+    def cleanup(self):
+        self.stop_input_loop()
+        self._release_wasd()
 
 
 class DiscoveryScreen(Screen):
@@ -112,6 +447,7 @@ class DiscoveryScreen(Screen):
 class ControlScreen(Screen):
     MODE_TOUCH = "touch"
     MODE_POINTER = "pointer"
+    MODE_GAMEPAD = "gamepad"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -149,6 +485,11 @@ class ControlScreen(Screen):
         )
         self.layout.add_widget(self.screen_image)
 
+        self.gamepad = GamepadOverlay(size_hint=(1, 1))
+        self.gamepad.opacity = 0
+        self.gamepad.disabled = True
+        self.layout.add_widget(self.gamepad)
+
         self.trackpad_label = Label(
             text="[b]POINTER MODE[/b]\n\nFinger = trackpad\nTap = click | Double-tap = right click\nTwo-finger swipe = scroll / switch apps",
             markup=True, font_size=18, halign="center", valign="center",
@@ -161,39 +502,65 @@ class ControlScreen(Screen):
         self.layout.add_widget(self.trackpad_label)
 
         top_bar = BoxLayout(size_hint_y=0.08, pos_hint={"top": 1},
-                             padding=[6, 4], spacing=6)
+                             padding=[6, 4], spacing=4)
 
         self.touch_btn = Button(
-            text="Touch", size_hint_x=0.18,
+            text="Touch", size_hint_x=0.15,
             background_color=(0.2, 0.7, 0.3, 1),
-            font_size=14, bold=True
+            font_size=13, bold=True
         )
         self.touch_btn.bind(on_press=lambda b: self._set_mode(self.MODE_TOUCH))
         top_bar.add_widget(self.touch_btn)
 
         self.pointer_btn = Button(
-            text="Pointer", size_hint_x=0.18,
+            text="Pointer", size_hint_x=0.15,
             background_color=(0.3, 0.3, 0.3, 1),
-            font_size=14
+            font_size=13
         )
         self.pointer_btn.bind(on_press=lambda b: self._set_mode(self.MODE_POINTER))
         top_bar.add_widget(self.pointer_btn)
 
+        self.game_btn = Button(
+            text="Game", size_hint_x=0.15,
+            background_color=(0.3, 0.3, 0.3, 1),
+            font_size=13
+        )
+        self.game_btn.bind(on_press=lambda b: self._set_mode(self.MODE_GAMEPAD))
+        top_bar.add_widget(self.game_btn)
+
         self.status_label = Label(text="Connecting...",
-                                   font_size=12, halign="center",
-                                   size_hint_x=0.24)
+                                   font_size=11, halign="center",
+                                   size_hint_x=0.25)
         self.status_label.bind(size=self.status_label.setter("text_size"))
         top_bar.add_widget(self.status_label)
 
-        keyboard_btn = Button(text="KB", size_hint_x=0.12,
+        clipboard_btn = Button(text="Clip", size_hint_x=0.1,
+                                background_color=(0.3, 0.7, 0.3, 1),
+                                font_size=11)
+        clipboard_btn.bind(on_press=self._sync_clipboard)
+        top_bar.add_widget(clipboard_btn)
+
+        files_btn = Button(text="Files", size_hint_x=0.1,
+                            background_color=(0.2, 0.5, 0.9, 1),
+                            font_size=11)
+        files_btn.bind(on_press=self._open_files)
+        top_bar.add_widget(files_btn)
+
+        keyboard_btn = Button(text="KB", size_hint_x=0.1,
                                background_color=(0.3, 0.3, 0.8, 1),
-                               font_size=14, bold=True)
+                               font_size=13, bold=True)
         keyboard_btn.bind(on_press=self._show_keyboard)
         top_bar.add_widget(keyboard_btn)
 
-        disconnect_btn = Button(text="X", size_hint_x=0.1,
+        settings_btn = Button(text="Bind", size_hint_x=0.1,
+                              background_color=(0.5, 0.3, 0.7, 1),
+                              font_size=11, bold=True)
+        settings_btn.bind(on_press=self._open_settings)
+        top_bar.add_widget(settings_btn)
+
+        disconnect_btn = Button(text="X", size_hint_x=0.08,
                                  background_color=(0.7, 0.2, 0.2, 1),
-                                 font_size=16, bold=True)
+                                 font_size=15, bold=True)
         disconnect_btn.bind(on_press=self._disconnect)
         top_bar.add_widget(disconnect_btn)
 
@@ -201,10 +568,10 @@ class ControlScreen(Screen):
 
         self.mode_hint = Label(
             text="[b]TOUCH MODE[/b]  |  Tap = click  |  Swipe = scroll/switch",
-            markup=True, font_size=12, halign="center",
-            size_hint=(0.9, 0.05),
-            pos_hint={"center_x": 0.5, "y": 0.01},
-            color=(1, 1, 1, 0.5)
+            markup=True, font_size=11, halign="center",
+            size_hint=(0.9, 0.04),
+            pos_hint={"center_x": 0.5, "y": 0.005},
+            color=(1, 1, 1, 0.4)
         )
         self.mode_hint.bind(size=self.mode_hint.setter("text_size"))
         self.layout.add_widget(self.mode_hint)
@@ -217,28 +584,44 @@ class ControlScreen(Screen):
 
     def _set_mode(self, mode):
         self.mode = mode
+        self.touch_btn.background_color = (0.3, 0.3, 0.3, 1)
+        self.pointer_btn.background_color = (0.3, 0.3, 0.3, 1)
+        self.game_btn.background_color = (0.3, 0.3, 0.3, 1)
+
+        self.screen_image.opacity = 1
+        self._showing_screen = True
+        self.trackpad_label.opacity = 0
+        self.gamepad.opacity = 0
+        self.gamepad.disabled = True
+        self.gamepad.stop_input_loop()
+
         if mode == self.MODE_TOUCH:
             self.touch_btn.background_color = (0.2, 0.7, 0.3, 1)
-            self.pointer_btn.background_color = (0.3, 0.3, 0.3, 1)
-            self.screen_image.opacity = 1
-            self._showing_screen = True
-            self.trackpad_label.opacity = 0
             self.mode_hint.text = "[b]TOUCH MODE[/b]  |  Tap = click  |  Swipe = scroll/switch"
-        else:
-            self.touch_btn.background_color = (0.3, 0.3, 0.3, 1)
+        elif mode == self.MODE_POINTER:
             self.pointer_btn.background_color = (0.2, 0.5, 0.9, 1)
             self.screen_image.opacity = 0
             self._showing_screen = False
             self.trackpad_label.opacity = 1
             self.mode_hint.text = "[b]POINTER MODE[/b]  |  Finger = trackpad  |  Tap = click  |  Double-tap = right click"
+        elif mode == self.MODE_GAMEPAD:
+            self.game_btn.background_color = (0.8, 0.3, 0.1, 1)
+            self.gamepad.opacity = 1
+            self.gamepad.disabled = False
+            self.gamepad.set_client(self.client)
+            self.gamepad.apply_bindings(load_bindings())
+            self.gamepad.start_input_loop()
+            self.mode_hint.text = "[b]GAMEPAD MODE[/b]  |  L-stick = move  |  R-stick = aim  |  Buttons = actions"
 
     def on_enter(self):
         if self.client and self.client.connected:
             self.status_label.text = "Connected"
             Window.bind(on_keyboard=self._on_keyboard)
+            self.client.set_clipboard_callback(self._on_clipboard_push)
 
     def on_leave(self):
         Window.unbind(on_keyboard=self._on_keyboard)
+        self.gamepad.cleanup()
 
     def update_frame(self, img_bytes):
         if not self._showing_screen:
@@ -311,6 +694,11 @@ class ControlScreen(Screen):
         if not self.client or not self.client.connected:
             return super().on_touch_down(touch)
 
+        if self.mode == self.MODE_GAMEPAD:
+            if self.gamepad.on_touch_down(touch):
+                return True
+            return super().on_touch_down(touch)
+
         if not self._is_in_control_area(touch):
             return super().on_touch_down(touch)
 
@@ -343,6 +731,11 @@ class ControlScreen(Screen):
         return True
 
     def on_touch_move(self, touch):
+        if self.mode == self.MODE_GAMEPAD:
+            if self.gamepad.on_touch_move(touch):
+                return True
+            return super().on_touch_move(touch)
+
         if touch.grab_current is not self:
             return super().on_touch_move(touch)
 
@@ -356,10 +749,7 @@ class ControlScreen(Screen):
             if abs(dx) > MOVE_THRESHOLD or abs(dy) > MOVE_THRESHOLD:
                 self._is_dragging = True
 
-                if self.mode == self.MODE_TOUCH:
-                    sens = TOUCH_SENSITIVITY
-                else:
-                    sens = POINTER_SENSITIVITY
+                sens = TOUCH_SENSITIVITY if self.mode == self.MODE_TOUCH else POINTER_SENSITIVITY
 
                 self._smooth_dx = self._smooth_dx * (1 - SMOOTHING) + dx * SMOOTHING
                 self._smooth_dy = self._smooth_dy * (1 - SMOOTHING) + dy * SMOOTHING
@@ -373,6 +763,11 @@ class ControlScreen(Screen):
         return True
 
     def on_touch_up(self, touch):
+        if self.mode == self.MODE_GAMEPAD:
+            if self.gamepad.on_touch_up(touch):
+                return True
+            return super().on_touch_up(touch)
+
         if touch.grab_current is not self:
             return super().on_touch_up(touch)
 
@@ -461,6 +856,51 @@ class ControlScreen(Screen):
         self._is_dragging = False
         self._smooth_dx = 0
         self._smooth_dy = 0
+
+    def _sync_clipboard(self, *args):
+        if not self.client or not self.client.connected:
+            return
+        try:
+            from kivy.core.clipboard import Clipboard
+            text = Clipboard.paste()
+            if text:
+                self.client.send_clipboard_set(text)
+                self.mode_hint.text = "[b]CLIPBOARD SYNCED[/b]  |  Sent to PC"
+                Clock.schedule_once(lambda dt: self._restore_hint(), 2)
+            else:
+                self.client.send_clipboard_get()
+                self.mode_hint.text = "[b]CLIPBOARD REQUESTED[/b]  |  Fetching from PC..."
+                Clock.schedule_once(lambda dt: self._restore_hint(), 2)
+        except Exception:
+            pass
+
+    def _on_clipboard_push(self, text):
+        if text:
+            try:
+                from kivy.core.clipboard import Clipboard
+                Clipboard.copy(text)
+                self.mode_hint.text = "[b]CLIPBOARD RECEIVED[/b]  |  Pasted from PC"
+                Clock.schedule_once(lambda dt: self._restore_hint(), 3)
+            except Exception:
+                pass
+
+    def _restore_hint(self):
+        if self.mode == self.MODE_TOUCH:
+            self.mode_hint.text = "[b]TOUCH MODE[/b]  |  Tap = click  |  Swipe = scroll/switch"
+        elif self.mode == self.MODE_POINTER:
+            self.mode_hint.text = "[b]POINTER MODE[/b]  |  Finger = trackpad  |  Tap = click  |  Double-tap = right click"
+        elif self.mode == self.MODE_GAMEPAD:
+            self.mode_hint.text = "[b]GAMEPAD MODE[/b]  |  L-stick = move  |  R-stick = aim  |  Buttons = actions"
+
+    def _open_files(self, *args):
+        if self.manager and hasattr(self.manager, "get_screen"):
+            fs = self.manager.get_screen("file_browser")
+            fs.client = self.client
+            self.manager.current = "file_browser"
+
+    def _open_settings(self, *args):
+        if self.manager and hasattr(self.manager, "get_screen"):
+            self.manager.current = "settings"
 
     def _send_scroll(self, dy):
         if self.client and self.client.connected:
@@ -552,6 +992,7 @@ class ControlScreen(Screen):
         return False
 
     def _disconnect(self, *args):
+        self.gamepad.cleanup()
         if self.client:
             self.client.disconnect()
         if self.app_ref:
@@ -569,8 +1010,13 @@ class LazyBoyApp(App):
         self.control_screen = ControlScreen(name="control")
         self.control_screen.app_ref = self
 
+        self.file_browser_screen = FileBrowserScreen(name="file_browser")
+        self.settings_screen = KeyBindingsScreen(name="settings")
+
         self.sm.add_widget(self.discovery_screen)
         self.sm.add_widget(self.control_screen)
+        self.sm.add_widget(self.file_browser_screen)
+        self.sm.add_widget(self.settings_screen)
 
         self.client = ControlClient()
         self.client.set_frame_callback(self._on_frame)

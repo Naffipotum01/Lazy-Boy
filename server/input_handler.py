@@ -62,21 +62,40 @@ class InputHandler:
         if dx != 0:
             pyautogui.hscroll(int(dx * 3), _pause=False)
 
+    def _map_key(self, key):
+        key_map = {
+            "lctrl": "ctrl",
+            "rctrl": "ctrl",
+            "lshift": "shift",
+            "rshift": "shift",
+            "lalt": "alt",
+            "ralt": "alt",
+            "leftmouse": None,
+            "rightmouse": None,
+        }
+        return key_map.get(key, key)
+
     def key_down(self, key):
         try:
-            pyautogui.keyDown(key, _pause=False)
+            mapped = self._map_key(key)
+            if mapped:
+                pyautogui.keyDown(mapped, _pause=False)
         except Exception:
             pass
 
     def key_up(self, key):
         try:
-            pyautogui.keyUp(key, _pause=False)
+            mapped = self._map_key(key)
+            if mapped:
+                pyautogui.keyUp(mapped, _pause=False)
         except Exception:
             pass
 
     def key_press(self, key):
         try:
-            pyautogui.press(key, _pause=False)
+            mapped = self._map_key(key)
+            if mapped:
+                pyautogui.press(mapped, _pause=False)
         except Exception:
             pass
 

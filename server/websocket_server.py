@@ -6,8 +6,10 @@ import websockets
 from screen_capture import ScreenCapture
 from input_handler import InputHandler
 from approval import ApprovalDialog
+from clipboard_sync import ClipboardSync
 
 WS_PORT = 8765
+FS_PORT = 8766
 
 
 class ControlServer:
@@ -19,6 +21,9 @@ class ControlServer:
         self.approved_ips = set()
         self.loop = None
         self._server = None
+        self._file_server = None
+
+        self.clipboard = ClipboardSync(on_change_callback=self._on_clipboard_change)
 
     async def _handler(self, websocket):
         addr = websocket.remote_address
@@ -77,6 +82,21 @@ class ControlServer:
         except (websockets.ConnectionClosed, asyncio.CancelledError):
             pass
 
+    def _broadcast(self, msg):
+        if not self.connected:
+            return
+        msg_str = json.dumps(msg)
+        for ws in self.connected.copy():
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    ws.send(msg_str), self.loop
+                )
+            except Exception:
+                pass
+
+    def _on_clipboard_change(self, text):
+        self._broadcast({"type": "clipboard_push", "text": text})
+
     def _handle_command(self, data):
         cmd = data.get("type")
 
@@ -111,10 +131,22 @@ class ControlServer:
             self.input.mouse_scroll(data.get("dx", 0), data["dy"])
 
         elif cmd == "key_down":
-            self.input.key_down(data["key"])
+            key = data["key"]
+            if key == "leftmouse":
+                self.input.mouse_down(0, 0, "left")
+            elif key == "rightmouse":
+                self.input.mouse_down(0, 0, "right")
+            else:
+                self.input.key_down(key)
 
         elif cmd == "key_up":
-            self.input.key_up(data["key"])
+            key = data["key"]
+            if key == "leftmouse":
+                self.input.mouse_up(0, 0, "left")
+            elif key == "rightmouse":
+                self.input.mouse_up(0, 0, "right")
+            else:
+                self.input.key_up(key)
 
         elif cmd == "key_press":
             self.input.key_press(data["key"])
@@ -125,7 +157,90 @@ class ControlServer:
         elif cmd == "hotkey":
             self.input.hotkey(*data["keys"])
 
+        elif cmd == "clipboard_set":
+            self.clipboard.set(data["text"])
+            self._broadcast({"type": "clipboard_push", "text": data["text"]})
+
+        elif cmd == "clipboard_get":
+            self._broadcast({"type": "clipboard_push", "text": self.clipboard.get()})
+
+        elif cmd == "file_list":
+            self._list_files(data.get("path", "."))
+
+        elif cmd == "file_serve":
+            port = data.get("port", 0)
+            self._start_file_server(port)
+
+        elif cmd == "file_stop":
+            self._stop_file_server()
+
+        elif cmd == "file_upload":
+            import base64, os
+            path = data.get("path", ".")
+            name = data.get("name", "file")
+            content = data.get("content", "")
+            root = os.path.abspath(os.path.expanduser("~"))
+            dest = os.path.abspath(os.path.join(root, path, name))
+            if dest.startswith(root):
+                try:
+                    raw = base64.b64decode(content)
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    with open(dest, "wb") as f:
+                        f.write(raw)
+                except Exception as e:
+                    pass
+
+        elif cmd == "file_mkdir":
+            import os
+            path = data.get("path", ".")
+            name = data.get("name", "New Folder")
+            root = os.path.abspath(os.path.expanduser("~"))
+            dest = os.path.abspath(os.path.join(root, path, name))
+            if dest.startswith(root):
+                try:
+                    os.makedirs(dest, exist_ok=True)
+                except Exception:
+                    pass
+
+    def _list_files(self, path):
+        import os
+        try:
+            entries = []
+            abs_path = os.path.abspath(os.path.expanduser(path))
+            for name in os.listdir(abs_path):
+                full = os.path.join(abs_path, name)
+                entries.append({
+                    "name": name,
+                    "is_dir": os.path.isdir(full),
+                    "size": os.path.getsize(full) if os.path.isfile(full) else 0,
+                    "mtime": os.path.getmtime(full),
+                })
+            self._broadcast({
+                "type": "file_list_result",
+                "path": abs_path,
+                "entries": entries,
+                "parent": os.path.dirname(abs_path) if abs_path != os.path.abspath(os.sep) else None,
+            })
+        except Exception as e:
+            self._broadcast({"type": "file_list_result", "error": str(e)})
+
+    def _start_file_server(self, port):
+        if self._file_server:
+            self._stop_file_server()
+
+        from file_server import FileServer
+        self._file_server = FileServer(port or FS_PORT)
+        self._file_server.start()
+        addr = self._file_server.address()
+        self._broadcast({"type": "file_server_started", "host": addr[0], "port": addr[1]})
+
+    def _stop_file_server(self):
+        if self._file_server:
+            self._file_server.stop()
+            self._file_server = None
+
     async def _run(self):
+        self.clipboard.start()
         self._server = await websockets.serve(self._handler, "0.0.0.0", WS_PORT)
         print(f"[*] WebSocket server on port {WS_PORT}")
         await self._server.wait_closed()
@@ -136,5 +251,7 @@ class ControlServer:
         self.loop.run_until_complete(self._run())
 
     def stop(self):
+        self.clipboard.stop()
+        self._stop_file_server()
         if self._server:
             self._server.close()
