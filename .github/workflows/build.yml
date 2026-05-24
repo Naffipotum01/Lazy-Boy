@@ -22,12 +22,16 @@ jobs:
           echo -e "\nd56f5187479451eabf01fb78af6dfcb131a6481e" >> $SDK_ROOT/licenses/android-sdk-license
           echo -e "\ne6b7c2ab7fa2298c15165e9583d0cbd0846f5099" >> $SDK_ROOT/licenses/android-sdk-license
           echo -e "\n33b6a2b64607f11b759f320ef9dff4ae5c47d97a" >> $SDK_ROOT/licenses/android-sdk-license
-          if [ -d "$SDK_ROOT/cmdline-tools" ]; then
-            mkdir -p $SDK_ROOT/tools/bin
-            for f in $SDK_ROOT/cmdline-tools/latest/bin/*; do
-              ln -sf "$f" "$SDK_ROOT/tools/bin/$(basename $f)"
-            done
-          fi
+          mkdir -p $SDK_ROOT/cmdline-tools
+          cd /tmp
+          wget -q https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdtools.zip
+          unzip -q cmdtools.zip -d $SDK_ROOT/cmdline-tools
+          mv $SDK_ROOT/cmdline-tools/cmdline-tools $SDK_ROOT/cmdline-tools/latest
+          mkdir -p $SDK_ROOT/tools/bin
+          for f in $SDK_ROOT/cmdline-tools/latest/bin/*; do
+            ln -sf "$f" "$SDK_ROOT/tools/bin/$(basename $f)"
+          done
+          chmod +x $SDK_ROOT/tools/bin/*
 
       - name: Build APK
         working-directory: android
