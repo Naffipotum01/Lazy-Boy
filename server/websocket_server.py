@@ -11,6 +11,8 @@ from tablet_mode import set_tablet_mode, is_tablet_mode
 from phone_viewer import PhoneViewer
 from voice_commands import VoiceCommandHandler
 from audio_stream import AudioStreamer
+from camera_stream import PcCameraStreamer
+from phone_camera_viewer import PhoneCameraViewer
 
 WS_PORT = 8765
 FS_PORT = 8766
@@ -35,6 +37,8 @@ class ControlServer:
         self.audio = AudioStreamer()
         self._audio_mic_on = False
         self._audio_speaker_on = False
+        self.pc_cam = PcCameraStreamer()
+        self._phone_cam_viewer = None
 
     async def _handler(self, websocket):
         addr = websocket.remote_address
@@ -119,6 +123,26 @@ class ControlServer:
             self._phone_viewer.stop()
             self._phone_viewer = None
         self._phone_ws = None
+
+    def _start_phone_cam_viewer(self):
+        if self._phone_cam_viewer:
+            return
+        self._phone_cam_viewer = PhoneCameraViewer(
+            send_callback=self._send_to_phone
+        )
+        self._phone_cam_viewer.start()
+
+    def _stop_phone_cam_viewer(self):
+        if self._phone_cam_viewer:
+            self._phone_cam_viewer.stop()
+            self._phone_cam_viewer = None
+
+    def _send_pc_camera_frame(self, jpg_bytes):
+        import base64
+        self._send_to_phone({
+            "type": "pc_camera_frame",
+            "data": base64.b64encode(jpg_bytes).decode(),
+        })
 
     def _send_pc_audio(self, pcm_bytes):
         import base64
@@ -319,6 +343,38 @@ class ControlServer:
         elif cmd == "audio_speaker_stop":
             self._audio_speaker_on = False
             self.audio.stop()
+
+        elif cmd == "pc_camera_start":
+            self.pc_cam.start(send_callback=self._send_pc_camera_frame)
+
+        elif cmd == "pc_camera_stop":
+            self.pc_cam.stop()
+
+        elif cmd == "phone_camera_start":
+            self._start_phone_cam_viewer()
+
+        elif cmd == "phone_camera_frame":
+            if self._phone_cam_viewer:
+                import base64
+                jpg = base64.b64decode(data["data"])
+                self._phone_cam_viewer.update_frame(jpg)
+
+        elif cmd == "phone_camera_stop":
+            self._stop_phone_cam_viewer()
+
+        elif cmd == "bt_passthrough_key":
+            self.input.key_press(data["key"])
+
+        elif cmd == "bt_passthrough_mouse":
+            dx = data.get("dx", 0)
+            dy = data.get("dy", 0)
+            if dx or dy:
+                self.input.mouse_move_relative(dx, dy)
+            if data.get("click"):
+                btn = data.get("button", "left")
+                self.input.mouse_click(
+                    data.get("x", 0), data.get("y", 0), btn
+                )
 
     def _list_files(self, path):
         import os

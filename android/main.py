@@ -575,6 +575,7 @@ class ControlScreen(Screen):
     MODE_TOUCH = "touch"
     MODE_POINTER = "pointer"
     MODE_GAMEPAD = "gamepad"
+    MODE_BT_PASS = "bt_pass"
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -629,31 +630,39 @@ class ControlScreen(Screen):
         self.layout.add_widget(self.trackpad_label)
 
         top_bar = BoxLayout(size_hint_y=0.08, pos_hint={"top": 1},
-                             padding=[6, 4], spacing=4)
+                             padding=[6, 4], spacing=3)
 
         self.touch_btn = Button(
-            text="Touch", size_hint_x=0.15,
+            text="Touch", size_hint_x=0.12,
             background_color=(0.2, 0.7, 0.3, 1),
-            font_size=13, bold=True
+            font_size=11, bold=True
         )
         self.touch_btn.bind(on_press=lambda b: self._set_mode(self.MODE_TOUCH))
         top_bar.add_widget(self.touch_btn)
 
         self.pointer_btn = Button(
-            text="Pointer", size_hint_x=0.15,
+            text="Pointer", size_hint_x=0.12,
             background_color=(0.3, 0.3, 0.3, 1),
-            font_size=13
+            font_size=11
         )
         self.pointer_btn.bind(on_press=lambda b: self._set_mode(self.MODE_POINTER))
         top_bar.add_widget(self.pointer_btn)
 
         self.game_btn = Button(
-            text="Game", size_hint_x=0.15,
+            text="Game", size_hint_x=0.09,
             background_color=(0.3, 0.3, 0.3, 1),
-            font_size=13
+            font_size=11
         )
         self.game_btn.bind(on_press=lambda b: self._set_mode(self.MODE_GAMEPAD))
         top_bar.add_widget(self.game_btn)
+
+        self.bt_btn = Button(
+            text="BT", size_hint_x=0.08,
+            background_color=(0.3, 0.3, 0.3, 1),
+            font_size=11
+        )
+        self.bt_btn.bind(on_press=lambda b: self._set_mode(self.MODE_BT_PASS))
+        top_bar.add_widget(self.bt_btn)
 
         self.status_label = Label(text="Connecting...",
                                    font_size=11, halign="center",
@@ -685,17 +694,29 @@ class ControlScreen(Screen):
         self.voice_btn.bind(on_press=self._voice_press)
         top_bar.add_widget(self.voice_btn)
 
-        self.audio_mic_btn = Button(text="Mic➡", size_hint_x=0.1,
+        self.audio_mic_btn = Button(text="Mic➡", size_hint_x=0.08,
                                     background_color=(0.3, 0.3, 0.3, 1),
-                                    font_size=9)
+                                    font_size=8)
         self.audio_mic_btn.bind(on_press=self._toggle_phone_mic)
         top_bar.add_widget(self.audio_mic_btn)
 
-        self.audio_speaker_btn = Button(text="⬅Spk", size_hint_x=0.1,
+        self.audio_speaker_btn = Button(text="⬅Spk", size_hint_x=0.08,
                                         background_color=(0.3, 0.3, 0.3, 1),
-                                        font_size=9)
+                                        font_size=8)
         self.audio_speaker_btn.bind(on_press=self._toggle_pc_mic)
         top_bar.add_widget(self.audio_speaker_btn)
+
+        self.cam_btn = Button(text="📷", size_hint_x=0.08,
+                              background_color=(0.3, 0.3, 0.3, 1),
+                              font_size=12)
+        self.cam_btn.bind(on_press=self._toggle_phone_camera)
+        top_bar.add_widget(self.cam_btn)
+
+        self.pc_cam_btn = Button(text="PC📷", size_hint_x=0.08,
+                                 background_color=(0.3, 0.3, 0.3, 1),
+                                 font_size=8)
+        self.pc_cam_btn.bind(on_press=self._toggle_pc_camera)
+        top_bar.add_widget(self.pc_cam_btn)
 
         settings_btn = Button(text="Bind", size_hint_x=0.1,
                               background_color=(0.5, 0.3, 0.7, 1),
@@ -750,6 +771,11 @@ class ControlScreen(Screen):
         self.gamepad.disabled = True
         self.gamepad.stop_input_loop()
 
+        self.touch_btn.background_color = (0.3, 0.3, 0.3, 1)
+        self.pointer_btn.background_color = (0.3, 0.3, 0.3, 1)
+        self.game_btn.background_color = (0.3, 0.3, 0.3, 1)
+        self.bt_btn.background_color = (0.3, 0.3, 0.3, 1)
+
         if mode == self.MODE_TOUCH:
             self.touch_btn.background_color = (0.2, 0.7, 0.3, 1)
             self.mode_hint.text = "[b]TOUCH MODE[/b]  |  Tap = click  |  Swipe = scroll/switch"
@@ -767,6 +793,11 @@ class ControlScreen(Screen):
             self.gamepad.apply_bindings(load_bindings())
             self.gamepad.start_input_loop()
             self.mode_hint.text = "[b]GAMEPAD MODE[/b]  |  L-stick = move  |  R-stick = aim  |  Buttons = actions"
+        elif mode == self.MODE_BT_PASS:
+            self.bt_btn.background_color = (0.2, 0.4, 0.8, 1)
+            self.screen_image.opacity = 0
+            self._showing_screen = False
+            self.mode_hint.text = "[b]BT PASSTHROUGH[/b]  |  All input forwards to PC"
 
     def on_enter(self):
         if self.client and self.client.connected:
@@ -786,6 +817,14 @@ class ControlScreen(Screen):
         if getattr(self, '_pc_mic_on', False):
             self._pc_mic_on = False
             self.client and self.client.send({"type": "audio_mic_stop"})
+        if getattr(self, '_phone_cam_on', False):
+            self._phone_cam_on = False
+            if hasattr(self, '_phone_cam'):
+                self._phone_cam.stop()
+            self.client and self.client.send({"type": "phone_camera_stop"})
+        if getattr(self, '_pc_cam_on', False):
+            self._pc_cam_on = False
+            self.client and self.client.send({"type": "pc_camera_stop"})
 
     def update_frame(self, img_bytes):
         if not self._showing_screen:
@@ -863,6 +902,17 @@ class ControlScreen(Screen):
                 return True
             return super().on_touch_down(touch)
 
+        if self.mode == self.MODE_BT_PASS:
+            if self._is_in_control_area(touch):
+                self._t1_start = (touch.x, touch.y)
+                self._t1_pos = (touch.x, touch.y)
+                self._t1_time = time.time()
+                self._t1_grabbed = True
+                self._is_dragging = False
+                touch.grab(self)
+                return True
+            return super().on_touch_down(touch)
+
         if not self._is_in_control_area(touch):
             return super().on_touch_down(touch)
 
@@ -900,6 +950,21 @@ class ControlScreen(Screen):
                 return True
             return super().on_touch_move(touch)
 
+        if self.mode == self.MODE_BT_PASS:
+            if touch.grab_current is not self:
+                return super().on_touch_move(touch)
+            if self._t1_pos:
+                dx = touch.x - self._t1_pos[0]
+                dy = touch.y - self._t1_pos[1]
+                if abs(dx) > 1 or abs(dy) > 1:
+                    sens = 3.0
+                    sdx = int(dx * sens)
+                    sdy = int(-dy * sens)
+                    if abs(sdx) >= 1 or abs(sdy) >= 1:
+                        self.client.send_bt_mouse(dx=sdx, dy=sdy)
+                        self._t1_pos = (touch.x, touch.y)
+            return True
+
         if touch.grab_current is not self:
             return super().on_touch_move(touch)
 
@@ -931,6 +996,19 @@ class ControlScreen(Screen):
             if self.gamepad.on_touch_up(touch):
                 return True
             return super().on_touch_up(touch)
+
+        if self.mode == self.MODE_BT_PASS:
+            if touch.grab_current is not self:
+                return super().on_touch_up(touch)
+            touch.ungrab(self)
+            if self._t1_start:
+                dx = touch.x - self._t1_start[0]
+                dy = touch.y - self._t1_start[1]
+                dist = (dx**2 + dy**2) ** 0.5
+                if dist < 15:
+                    self.client.send_bt_mouse(click=True, button="left")
+            self._reset_touches()
+            return True
 
         if touch.grab_current is not self:
             return super().on_touch_up(touch)
@@ -1165,6 +1243,55 @@ class ControlScreen(Screen):
         elif not text:
             self.mode_hint.text = "[b]Voice cancelled[/b]"
 
+    def _toggle_phone_camera(self, *args):
+        if not self.client or not self.client.connected:
+            return
+        if getattr(self, '_phone_cam_on', False):
+            self._phone_cam_on = False
+            self.cam_btn.background_color = (0.3, 0.3, 0.3, 1)
+            if hasattr(self, '_phone_cam'):
+                self._phone_cam.stop()
+            self.client.send({"type": "phone_camera_stop"})
+            self.mode_hint.text = "[b]PHONE CAM OFF[/b]"
+        else:
+            self._phone_cam_on = True
+            self.cam_btn.background_color = (0.2, 0.7, 0.2, 1)
+            self.client.send({"type": "phone_camera_start"})
+            from phone_camera import PhoneCameraStreamer
+            self._phone_cam = PhoneCameraStreamer(client=self.client)
+            self._phone_cam.start()
+            self.mode_hint.text = "[b]PHONE CAM ON[/b]  |  Streaming to PC"
+        Clock.schedule_once(lambda dt: self._restore_hint(), 3)
+
+    def _toggle_pc_camera(self, *args):
+        if not self.client or not self.client.connected:
+            return
+        if getattr(self, '_pc_cam_on', False):
+            self._pc_cam_on = False
+            self.pc_cam_btn.background_color = (0.3, 0.3, 0.3, 1)
+            self.client.send({"type": "pc_camera_stop"})
+            self.mode_hint.text = "[b]PC CAM OFF[/b]"
+        else:
+            self._pc_cam_on = True
+            self.pc_cam_btn.background_color = (0.7, 0.2, 0.2, 1)
+            self.client.set_pc_camera_callback(self._on_pc_camera)
+            self.client.send({"type": "pc_camera_start"})
+            self.mode_hint.text = "[b]PC CAM ON[/b]  |  Viewing on phone"
+        Clock.schedule_once(lambda dt: self._restore_hint(), 3)
+
+    def _on_pc_camera(self, jpg_bytes):
+        if not getattr(self, '_pc_cam_on', False):
+            return
+        try:
+            from io import BytesIO
+            from kivy.core.image import Image as CoreImage
+            buf = BytesIO(jpg_bytes)
+            ci = CoreImage(buf, ext="jpg")
+            self.screen_image.texture = ci.texture
+            self.screen_image.opacity = 1
+        except Exception:
+            pass
+
     def _toggle_phone_mic(self, *args):
         if not self.client or not self.client.connected:
             return
@@ -1274,6 +1401,12 @@ class ControlScreen(Screen):
         if not self.client or not self.client.connected:
             return False
 
+        if self.mode == self.MODE_BT_PASS:
+            if codepoint and codepoint.isprintable():
+                self.client.send_type_text(codepoint)
+                return True
+            return False
+
         if key == 24 or key == 1073741952:
             self.client.send_key_press("volumeup")
             return True
@@ -1313,6 +1446,12 @@ class ControlScreen(Screen):
     def _disconnect(self, *args):
         if self._host_mode:
             self._stop_host_mode()
+        if getattr(self, '_phone_cam_on', False):
+            self._phone_cam_on = False
+            if hasattr(self, '_phone_cam'):
+                self._phone_cam.stop()
+        if getattr(self, '_pc_cam_on', False):
+            self._pc_cam_on = False
         self.gamepad.cleanup()
         if self.client:
             self.client.disconnect()

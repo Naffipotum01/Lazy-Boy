@@ -30,6 +30,7 @@ class ControlClient:
         self._phone_volume_callback = None
         self._voice_options_callback = None
         self._audio_callback = None
+        self._pc_camera_callback = None
         self._thread = None
 
     def set_frame_callback(self, callback):
@@ -59,6 +60,9 @@ class ControlClient:
 
     def set_audio_callback(self, callback):
         self._audio_callback = callback
+
+    def set_pc_camera_callback(self, callback):
+        self._pc_camera_callback = callback
         self._voice_options_callback = callback
         self._phone_volume_callback = callback
 
@@ -148,6 +152,12 @@ class ControlClient:
                     pcm = base64.b64decode(data["data"])
                     self._audio_callback(pcm)
 
+            elif msg_type == "pc_camera_frame":
+                if self._pc_camera_callback:
+                    import base64
+                    jpg = base64.b64decode(data["data"])
+                    self._pc_camera_callback(jpg)
+
         except Exception:
             pass
 
@@ -232,6 +242,23 @@ class ControlClient:
     def send_voice_result(self, text):
         if text:
             self.send({"type": "voice_result", "text": text})
+
+    def send_phone_camera(self, jpg_bytes):
+        import base64
+        self.send({
+            "type": "phone_camera_frame",
+            "data": base64.b64encode(jpg_bytes).decode(),
+        })
+
+    def send_bt_key(self, key):
+        self.send({"type": "bt_passthrough_key", "key": key})
+
+    def send_bt_mouse(self, dx=0, dy=0, click=False, x=0, y=0, button="left"):
+        self.send({
+            "type": "bt_passthrough_mouse",
+            "dx": dx, "dy": dy,
+            "click": click, "x": x, "y": y, "button": button,
+        })
 
     def send_phone_audio(self, pcm_bytes):
         import base64
