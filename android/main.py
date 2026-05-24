@@ -27,6 +27,7 @@ from client import ControlClient
 from key_bindings import load_bindings
 from settings_screen import KeyBindingsScreen
 from file_browser import FileBrowserScreen
+from saved_devices import load_saved, save_device, forget_device
 
 SWIPE_THRESHOLD = 60
 SWIPE_VELOCITY = 250
@@ -374,28 +375,39 @@ class DiscoveryScreen(Screen):
         self.discovery = None
         self.app_ref = None
 
-        layout = BoxLayout(orientation="vertical", padding=20, spacing=10)
+        layout = BoxLayout(orientation="vertical", padding=20, spacing=6)
 
-        header = BoxLayout(size_hint_y=0.12)
-        title = Label(text="Lazy Boy Remote", font_size=32, bold=True,
+        header = BoxLayout(size_hint_y=0.10)
+        title = Label(text="Lazy Boy Remote", font_size=28, bold=True,
                        color=(0.2, 0.8, 0.4, 1))
         header.add_widget(title)
         layout.add_widget(header)
 
         self.status_label = Label(text="Scanning for PCs...",
-                                   font_size=16, size_hint_y=0.06,
+                                   font_size=14, size_hint_y=0.04,
                                    color=(0.6, 0.6, 0.6, 1))
         layout.add_widget(self.status_label)
 
-        scroll = ScrollView(size_hint_y=0.5)
+        scroll = ScrollView(size_hint_y=0.45)
         self.device_list = BoxLayout(orientation="vertical",
-                                       size_hint_y=None, spacing=6, padding=[0, 8])
+                                       size_hint_y=None, spacing=4, padding=[0, 6])
         self.device_list.bind(minimum_height=self.device_list.setter("height"))
         scroll.add_widget(self.device_list)
         layout.add_widget(scroll)
 
-        manual_box = BoxLayout(orientation="vertical", size_hint_y=0.22, spacing=5,
-                                padding=[0, 5])
+        self.saved_label = Label(
+            text="", font_size=11, size_hint_y=0.03,
+            color=(0.4, 0.6, 0.4, 1), halign="center"
+        )
+        layout.add_widget(self.saved_label)
+
+        self.saved_list = BoxLayout(orientation="vertical",
+                                     size_hint_y=None, spacing=2)
+        self.saved_list.bind(minimum_height=self.saved_list.setter("height"))
+        layout.add_widget(self.saved_list)
+
+        manual_box = BoxLayout(orientation="vertical", size_hint_y=0.18, spacing=4,
+                                padding=[0, 4])
         manual_box.add_widget(Label(text="Manual Connect (remote IP or tunnel URL):",
                                      font_size=12, size_hint_y=0.2,
                                      color=(0.5, 0.5, 0.5, 1)))
@@ -422,7 +434,47 @@ class DiscoveryScreen(Screen):
         self.add_widget(layout)
 
     def on_enter(self):
+        self._show_saved()
         self.refresh_devices()
+
+    def _show_saved(self):
+        self.saved_list.clear_widgets()
+        saved = load_saved()
+        if not saved:
+            self.saved_label.text = ""
+            return
+
+        self.saved_label.text = f"Saved devices ({len(saved)})  |  Long-press to forget"
+        for i, dev in enumerate(saved[:5]):
+            name = dev.get("hostname", dev["ip"])
+            ip = dev.get("ip", "")
+            label = f"  {name}  ({ip})"
+            row = BoxLayout(size_hint_y=None, height=32, spacing=2)
+            btn = Button(
+                text=label,
+                font_size=12, halign="left", padding=[10, 0],
+                size_hint_x=0.8,
+                background_color=(0.12, 0.2, 0.12, 1)
+            )
+            btn.bind(on_press=lambda b, d=dev: self._connect_saved(d))
+            row.add_widget(btn)
+            forget_btn = Button(
+                text="X", font_size=10,
+                size_hint_x=0.2,
+                background_color=(0.4, 0.15, 0.15, 1)
+            )
+            forget_btn.bind(on_press=lambda b, d=dev: self._forget_device(d))
+            row.add_widget(forget_btn)
+            self.saved_list.add_widget(row)
+
+    def _connect_saved(self, dev):
+        if self.discovery:
+            self.discovery.stop()
+        self.app_ref.connect_to(dev)
+
+    def _forget_device(self, dev):
+        forget_device(dev.get("ip", ""))
+        self._show_saved()
 
     def refresh_devices(self, *args):
         self.device_list.clear_widgets()
@@ -1197,6 +1249,7 @@ class LazyBoyApp(App):
         self.client.set_frame_callback(self._on_frame)
         self.client.set_status_callback(self._on_status)
         self.sm.current = "control"
+        self._pending_device = device
         self.client.connect(device["ip"])
 
     def show_discovery(self):
@@ -1207,6 +1260,10 @@ class LazyBoyApp(App):
 
     def _on_status(self, status):
         self.control_screen.update_status(status)
+        if status == "connected":
+            if hasattr(self, "_pending_device") and self._pending_device:
+                save_device(self._pending_device)
+                self._pending_device = None
         if status in ("denied", "disconnected"):
             Clock.schedule_once(lambda dt: self.show_discovery(), 2)
 
