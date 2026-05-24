@@ -23,7 +23,11 @@ def main():
     public_ip = remote.detect_public_ip()
     if public_ip:
         print(f"[*] Public IP: {public_ip}")
-        remote.start_upnp()
+        upnp_ok = remote.start_upnp()
+        if upnp_ok:
+            print("[*] UPnP port forwarding enabled")
+        else:
+            print("[*] UPnP not available (install miniupnpc for auto port forwarding)")
     else:
         print("[*] Public IP: unknown (no internet?)")
 
