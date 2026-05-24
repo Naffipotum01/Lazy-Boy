@@ -19,6 +19,9 @@ android.archs = arm64-v8a
 
 services = LBService:service.py:foreground
 
+icon.filename = %(source.dir)s/icon.png
+presplash.filename = %(source.dir)s/presplash.png
+
 [buildozer]
 log_level = 2
 warn_on_root = 0
