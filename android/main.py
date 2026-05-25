@@ -38,6 +38,7 @@ from booster_screen import BoosterScreen
 from network_booster import NetworkBooster as AndroidNetworkBooster
 from hotspot_screen import HotspotScreen
 from hotspot_helper import HotspotHelper
+from standalone_hotspot import StandaloneHotspot
 
 SWIPE_THRESHOLD = 60
 SWIPE_VELOCITY = 250
@@ -416,6 +417,22 @@ class DiscoveryScreen(Screen):
         self.saved_list.bind(minimum_height=self.saved_list.setter("height"))
         layout.add_widget(self.saved_list)
 
+        hotspot_box = BoxLayout(orientation="vertical", size_hint_y=0.12, spacing=3,
+                                padding=[0, 4])
+        self.hotspot_btn = Button(
+            text="Create LazyBoy Hotspot (PC connects to me)",
+            size_hint_y=None, height=dp(38),
+            background_color=(0.2, 0.7, 0.2, 1), font_size=12
+        )
+        self.hotspot_btn.bind(on_press=self._toggle_hotspot)
+        hotspot_box.add_widget(self.hotspot_btn)
+        self.hotspot_info = Label(
+            text="", font_size=11, size_hint_y=None, height=dp(18),
+            color=(0.5, 0.8, 0.5, 1), halign="center"
+        )
+        hotspot_box.add_widget(self.hotspot_info)
+        layout.add_widget(hotspot_box)
+
         manual_box = BoxLayout(orientation="vertical", size_hint_y=0.18, spacing=4,
                                 padding=[0, 4])
         manual_box.add_widget(Label(text="Manual Connect (remote IP or tunnel URL):",
@@ -564,6 +581,27 @@ class DiscoveryScreen(Screen):
         device_copy = dict(device)
         device_copy["ip"] = addr
         self.app_ref.connect_to(device_copy)
+
+    def _toggle_hotspot(self, *args):
+        hotspot = getattr(self.app_ref, "standalone_hotspot", None)
+        if not hotspot:
+            return
+        info = hotspot.get_info()
+        if info.get("active"):
+            hotspot.stop()
+            self.hotspot_btn.text = "Create LazyBoy Hotspot (PC connects to me)"
+            self.hotspot_btn.background_color = (0.2, 0.7, 0.2, 1)
+            self.hotspot_info.text = ""
+        else:
+            result = hotspot.start()
+            if result.get("success"):
+                self.hotspot_btn.text = "Stop Hotspot"
+                self.hotspot_btn.background_color = (0.7, 0.2, 0.2, 1)
+                self.hotspot_info.text = (
+                    f"SSID: {result['ssid']}  Pass: {result['password']}\n"
+                    f"Connect PC to this WiFi, then open LazyBoy server"
+                )
+                self.status_label.text = "Hotspot active — connect PC to it"
 
     def _manual_connect(self, *args):
         text = self.manual_input.text.strip()
@@ -1534,6 +1572,7 @@ class LazyBoyApp(App):
         self.android_booster = AndroidNetworkBooster()
         self.hotspot_screen = HotspotScreen(name="hotspot")
         self.hotspot_helper = HotspotHelper()
+        self.standalone_hotspot = StandaloneHotspot()
 
         self.sm.add_widget(self.discovery_screen)
         self.sm.add_widget(self.control_screen)
@@ -1691,6 +1730,7 @@ class LazyBoyApp(App):
 
     def on_stop(self):
         self.client.disconnect()
+        self.standalone_hotspot.stop()
 
 
 if __name__ == "__main__":
