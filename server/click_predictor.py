@@ -1,6 +1,11 @@
-import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
+
+try:
+    import cv2
+    _HAVE_CV2 = True
+except Exception:
+    _HAVE_CV2 = False
 
 
 class ClickPredictor:
@@ -8,6 +13,18 @@ class ClickPredictor:
         self._last_frame = None
         self._last_predictions = []
         self._ocr_available = self._check_ocr()
+        self._font = None
+
+    def _get_font(self, size=14):
+        if self._font is None:
+            try:
+                self._font = ImageFont.truetype("arial.ttf", size)
+            except Exception:
+                try:
+                    self._font = ImageFont.truetype("DejaVuSans.ttf", size)
+                except Exception:
+                    self._font = ImageFont.load_default()
+        return self._font
 
     def _check_ocr(self):
         try:
@@ -19,6 +36,8 @@ class ClickPredictor:
             return False
 
     def _find_button_regions(self, gray):
+        if not _HAVE_CV2:
+            return []
         regions = []
         h, w = gray.shape
 
@@ -76,6 +95,8 @@ class ClickPredictor:
         return regions
 
     def _find_text_regions(self, gray):
+        if not _HAVE_CV2:
+            return []
         regions = []
         h, w = gray.shape
 
@@ -140,43 +161,57 @@ class ClickPredictor:
         return top3
 
     def render_overlay(self, pil_image, predictions):
-        import cv2
-        import numpy as np
-        img = np.array(pil_image)
-        overlay = img.copy()
+        img = pil_image.copy()
+        draw = ImageDraw.Draw(img, "RGBA")
+
+        colors = [(0, 200, 50, 200), (50, 150, 255, 200), (255, 100, 50, 200)]
+        bg_colors = [(0, 200, 50, 60), (50, 150, 255, 60), (255, 100, 50, 60)]
 
         for i, pred in enumerate(predictions):
             num = i + 1
             cx, cy = pred["cx"], pred["cy"]
-            x, y, w, h = pred["x"], pred["y"], pred["w"], pred["h"]
+            x, y, bw, bh = pred["x"], pred["y"], pred["w"], pred["h"]
 
-            color = [(0, 200, 50), (50, 150, 255), (255, 100, 50)][i]
-            cv2.rectangle(overlay, (x, y), (x + w, y + h), color, 2)
+            for j in range(3, 0, -1):
+                alpha = 0.08 * (4 - j)
+                bb = bg_colors[i]
+                cb = (bb[0], bb[1], bb[2], int(alpha * 255))
+                offset = 3 - j
+                draw.rectangle(
+                    [x - offset, y - offset, x + bw + offset, y + bh + offset],
+                    outline=cb, width=1,
+                )
+
+            draw.rectangle([x, y, x + bw, y + bh], outline=colors[i], width=2)
 
             arrow_tip = (cx, y - 15)
             arrow_base = (cx, y - 5)
-            cv2.arrowedLine(overlay, arrow_base, arrow_tip, color, 2, tipLength=0.3)
+            draw.line([arrow_base, arrow_tip], fill=colors[i], width=2)
 
-            dot_center = (cx, y - 25)
-            cv2.circle(overlay, dot_center, 12, (20, 20, 20), -1)
-            cv2.circle(overlay, dot_center, 12, color, 2)
-            cv2.putText(
-                overlay, str(num),
-                (dot_center[0] - 6, dot_center[1] + 5),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2,
+            dot_r = 12
+            dot_cx, dot_cy = cx, y - 28
+            draw.ellipse(
+                [dot_cx - dot_r, dot_cy - dot_r, dot_cx + dot_r, dot_cy + dot_r],
+                fill=(20, 20, 20, 220), outline=colors[i], width=2,
+            )
+            font = self._get_font(14)
+            text_bbox = draw.textbbox((0, 0), str(num), font=font)
+            tw = text_bbox[2] - text_bbox[0]
+            th = text_bbox[3] - text_bbox[1]
+            draw.text(
+                (dot_cx - tw / 2, dot_cy - th / 2 - 1),
+                str(num), fill=(255, 255, 255, 255), font=font,
             )
 
             if pred.get("text"):
-                text_y = y - 40
-                cv2.putText(
-                    overlay, pred["text"][:30],
-                    (cx - 40, text_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1,
+                font_sm = self._get_font(11)
+                draw.text(
+                    (cx - 40, y - 45),
+                    pred["text"][:30], fill=(255, 255, 255, 200),
+                    font=font_sm,
                 )
 
-        alpha = 0.85
-        result = cv2.addWeighted(overlay, alpha, img, 1 - alpha, 0)
-        return Image.fromarray(result)
+        return img
 
     def set_frame(self, pil_image):
         self._last_frame = pil_image
