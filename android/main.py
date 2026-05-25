@@ -1,6 +1,20 @@
 import os
 import sys
+import traceback
 os.environ["KIVY_NO_CONSOLELOG"] = "0"
+
+_CRASH_LOG = "/sdcard/lazyboy_crash.txt"
+
+def _log_crash(exc):
+    try:
+        with open(_CRASH_LOG, "w") as f:
+            f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+    except Exception:
+        try:
+            with open("/data/local/tmp/lazyboy_crash.txt", "w") as f:
+                f.write("".join(traceback.format_exception(type(exc), exc, exc.__traceback__)))
+        except Exception:
+            pass
 
 from kivy.app import App
 from kivy.uix.screenmanager import ScreenManager, Screen
@@ -1734,4 +1748,8 @@ class LazyBoyApp(App):
 
 
 if __name__ == "__main__":
-    LazyBoyApp().run()
+    try:
+        LazyBoyApp().run()
+    except Exception as e:
+        _log_crash(e)
+        raise
