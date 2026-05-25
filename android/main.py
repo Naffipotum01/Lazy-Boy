@@ -852,6 +852,7 @@ class ControlScreen(Screen):
             self.device_bridge.set_client(self.client)
             self.phone_radio.set_client(self.client)
             self.android_booster.set_client(self.client)
+            self.hotspot_helper.set_client(self.client)
 
     def on_leave(self):
         Window.unbind(on_keyboard=self._on_keyboard)
