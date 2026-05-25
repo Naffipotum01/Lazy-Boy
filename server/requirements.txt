@@ -9,3 +9,7 @@ pyperclip>=1.8
 # Optional: pip install pyaudio (requires build tools on Windows)
 # Enables phone-as-wireless-mic and PC-audio-to-phone streaming
 # pyaudio>=0.2
+# Optional: pip install opencv-python easyocr
+# Enables Smart Point mode (predictive click recommendations)
+# opencv-python>=4.8
+# easyocr>=1.7

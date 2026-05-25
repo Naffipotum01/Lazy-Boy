@@ -16,6 +16,7 @@ from phone_camera_viewer import PhoneCameraViewer
 from device_bridge import DeviceBridge
 from radio_bridge import PcRadioTuner
 from click_predictor import ClickPredictor
+from network_booster import NetworkBooster
 
 WS_PORT = 8765
 FS_PORT = 8766
@@ -49,6 +50,7 @@ class ControlServer:
         self._radio_playing = False
         self.predictor = ClickPredictor()
         self._smart_point_active = False
+        self.network = NetworkBooster()
 
     async def _handler(self, websocket):
         addr = websocket.remote_address
@@ -509,6 +511,30 @@ class ControlServer:
             self._smart_point_active = False
             self.screen.overlay_fn = None
             self._send_to_phone({"type": "smart_point_dismissed"})
+
+        # === Network Booster ===
+        elif cmd == "booster":
+            action = data.get("action", "")
+            result = None
+            if action == "speed_test":
+                result = self.network.speed_test()
+            elif action == "tcp_optimize":
+                result = self.network.optimize_tcp()
+            elif action == "tcp_reset":
+                result = self.network.reset_tcp()
+            elif action == "dns_cache":
+                result = self.network.start_dns_cache()
+            elif action == "dns_stop":
+                result = self.network.stop_dns_cache()
+            elif action == "hotspot":
+                result = self.network.optimize_hotspot()
+            elif action == "wifi_optimize":
+                result = self.network.optimize_hotspot()
+            elif action == "info":
+                info = self.network.get_connection_info()
+                result = {"info": info}
+            if result is not None:
+                self._send_to_phone({"type": "booster_result", "action": action, "result": result})
 
     def _do_smart_scan(self):
         try:

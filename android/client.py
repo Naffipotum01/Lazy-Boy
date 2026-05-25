@@ -35,6 +35,7 @@ class ControlClient:
         self._radio_audio_callback = None
         self._radio_phone_fm_callback = None
         self._smart_point_callback = None
+        self._booster_callback = None
 
     def set_frame_callback(self, callback):
         self._frame_callback = callback
@@ -82,6 +83,9 @@ class ControlClient:
 
     def set_smart_point_callback(self, callback):
         self._smart_point_callback = callback
+
+    def set_booster_callback(self, callback):
+        self._booster_callback = callback
 
     def connect(self, ip):
         if self.connected:
@@ -204,6 +208,14 @@ class ControlClient:
             elif msg_type == "smart_point_dismissed":
                 if self._smart_point_callback:
                     self._smart_point_callback([])
+
+            elif msg_type == "booster_result":
+                if self._booster_callback:
+                    self._booster_callback(data)
+
+            elif msg_type == "booster_status":
+                if self._booster_callback:
+                    self._booster_callback(data)
 
         except Exception:
             pass

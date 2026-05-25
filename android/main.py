@@ -34,6 +34,8 @@ from device_bridge import DeviceBridge
 from radio_screen import RadioScreen
 from phone_radio import PhoneRadio
 from smart_pointer import SmartPointerOverlay
+from booster_screen import BoosterScreen
+from network_booster import NetworkBooster as AndroidNetworkBooster
 
 SWIPE_THRESHOLD = 60
 SWIPE_VELOCITY = 250
@@ -735,6 +737,12 @@ class ControlScreen(Screen):
         radio_btn.bind(on_press=self._open_radio)
         top_bar.add_widget(radio_btn)
 
+        boost_btn = Button(text="Boost", size_hint_x=0.1,
+                           background_color=(0.2, 0.5, 0.7, 1),
+                           font_size=9)
+        boost_btn.bind(on_press=self._open_booster)
+        top_bar.add_widget(boost_btn)
+
         settings_btn = Button(text="Bind", size_hint_x=0.1,
                               background_color=(0.5, 0.3, 0.7, 1),
                               font_size=11, bold=True)
@@ -835,6 +843,7 @@ class ControlScreen(Screen):
             self.client.set_voice_options_callback(self._on_voice_options)
             self.device_bridge.set_client(self.client)
             self.phone_radio.set_client(self.client)
+            self.android_booster.set_client(self.client)
 
     def on_leave(self):
         Window.unbind(on_keyboard=self._on_keyboard)
@@ -1512,6 +1521,8 @@ class LazyBoyApp(App):
         self.bridge_screen = BridgeScreen(name="bridge")
         self.radio_screen = RadioScreen(name="radio")
         self.phone_radio = PhoneRadio()
+        self.booster_screen = BoosterScreen(name="booster")
+        self.android_booster = AndroidNetworkBooster()
 
         self.sm.add_widget(self.discovery_screen)
         self.sm.add_widget(self.control_screen)
@@ -1519,6 +1530,7 @@ class LazyBoyApp(App):
         self.sm.add_widget(self.settings_screen)
         self.sm.add_widget(self.bridge_screen)
         self.sm.add_widget(self.radio_screen)
+        self.sm.add_widget(self.booster_screen)
 
         self.client = ControlClient()
         self.client.set_frame_callback(self._on_frame)
@@ -1527,9 +1539,13 @@ class LazyBoyApp(App):
         self.client.set_radio_audio_callback(self._on_radio_audio)
         self.client.set_radio_phone_fm_callback(self._on_radio_phone_fm)
         self.client.set_smart_point_callback(self._on_smart_point)
+        self.client.set_booster_callback(self._on_booster)
 
         self.radio_screen.client = self.client
         self.radio_screen.phone_radio = self.phone_radio
+
+        self.booster_screen.client = self.client
+        self.booster_screen.booster = self.android_booster
 
         self._smart_point_on = True
         self._smart_scan_event = None
@@ -1573,6 +1589,18 @@ class LazyBoyApp(App):
             rs.client = self.client
             rs.phone_radio = self.phone_radio
             self.manager.current = "radio"
+
+    def _open_booster(self, *args):
+        if self.manager and hasattr(self.manager, "get_screen"):
+            bs = self.manager.get_screen("booster")
+            bs.client = self.client
+            bs.booster = self.android_booster
+            self.manager.current = "booster"
+
+    def _on_booster(self, data):
+        if self.manager and hasattr(self.manager, "get_screen"):
+            bs = self.manager.get_screen("booster")
+            bs.on_booster_result(data)
 
     def _on_radio_status(self, data):
         if self.manager and hasattr(self.manager, "get_screen"):
