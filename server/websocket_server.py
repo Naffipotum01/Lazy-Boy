@@ -17,6 +17,7 @@ from device_bridge import DeviceBridge
 from radio_bridge import PcRadioTuner
 from click_predictor import ClickPredictor
 from network_booster import NetworkBooster
+from hotspot_creator import HotspotCreator
 
 WS_PORT = 8765
 FS_PORT = 8766
@@ -51,6 +52,7 @@ class ControlServer:
         self.predictor = ClickPredictor()
         self._smart_point_active = False
         self.network = NetworkBooster()
+        self.hotspot = HotspotCreator()
 
     async def _handler(self, websocket):
         addr = websocket.remote_address
@@ -535,6 +537,25 @@ class ControlServer:
                 result = {"info": info}
             if result is not None:
                 self._send_to_phone({"type": "booster_result", "action": action, "result": result})
+
+        # === Hotspot Creator ===
+        elif cmd == "hotspot_create":
+            ssid = data.get("ssid", "LazyBoy-FreeNet")
+            password = data.get("password", "LazyBoy123")
+            result = self.hotspot.create(ssid, password)
+            self._send_to_phone({"type": "hotspot_created", "info": result})
+
+        elif cmd == "hotspot_stop":
+            self.hotspot.stop()
+            self._send_to_phone({"type": "hotspot_stopped"})
+
+        elif cmd == "hotspot_status":
+            status = self.hotspot.get_status()
+            self._send_to_phone({"type": "hotspot_status_info", "status": status})
+
+        elif cmd == "hotspot_bandwidth":
+            bw = self.hotspot.get_bandwidth_usage()
+            self._send_to_phone({"type": "hotspot_bandwidth", "bandwidth": bw})
 
     def _do_smart_scan(self):
         try:

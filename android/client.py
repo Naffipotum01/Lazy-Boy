@@ -36,6 +36,7 @@ class ControlClient:
         self._radio_phone_fm_callback = None
         self._smart_point_callback = None
         self._booster_callback = None
+        self._hotspot_callback = None
 
     def set_frame_callback(self, callback):
         self._frame_callback = callback
@@ -86,6 +87,9 @@ class ControlClient:
 
     def set_booster_callback(self, callback):
         self._booster_callback = callback
+
+    def set_hotspot_callback(self, callback):
+        self._hotspot_callback = callback
 
     def connect(self, ip):
         if self.connected:
@@ -216,6 +220,12 @@ class ControlClient:
             elif msg_type == "booster_status":
                 if self._booster_callback:
                     self._booster_callback(data)
+
+            elif msg_type in ("hotspot_created", "hotspot_stopped",
+                              "hotspot_status_info", "hotspot_bandwidth",
+                              "hotspot_phone_status"):
+                if self._hotspot_callback:
+                    self._hotspot_callback(data)
 
         except Exception:
             pass

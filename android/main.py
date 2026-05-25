@@ -36,6 +36,8 @@ from phone_radio import PhoneRadio
 from smart_pointer import SmartPointerOverlay
 from booster_screen import BoosterScreen
 from network_booster import NetworkBooster as AndroidNetworkBooster
+from hotspot_screen import HotspotScreen
+from hotspot_helper import HotspotHelper
 
 SWIPE_THRESHOLD = 60
 SWIPE_VELOCITY = 250
@@ -737,11 +739,17 @@ class ControlScreen(Screen):
         radio_btn.bind(on_press=self._open_radio)
         top_bar.add_widget(radio_btn)
 
-        boost_btn = Button(text="Boost", size_hint_x=0.1,
+        boost_btn = Button(text="Boost", size_hint_x=0.09,
                            background_color=(0.2, 0.5, 0.7, 1),
-                           font_size=9)
+                           font_size=8)
         boost_btn.bind(on_press=self._open_booster)
         top_bar.add_widget(boost_btn)
+
+        freenet_btn = Button(text="Free", size_hint_x=0.08,
+                             background_color=(0.2, 0.7, 0.2, 1),
+                             font_size=8, bold=True)
+        freenet_btn.bind(on_press=self._open_hotspot)
+        top_bar.add_widget(freenet_btn)
 
         settings_btn = Button(text="Bind", size_hint_x=0.1,
                               background_color=(0.5, 0.3, 0.7, 1),
@@ -1523,6 +1531,8 @@ class LazyBoyApp(App):
         self.phone_radio = PhoneRadio()
         self.booster_screen = BoosterScreen(name="booster")
         self.android_booster = AndroidNetworkBooster()
+        self.hotspot_screen = HotspotScreen(name="hotspot")
+        self.hotspot_helper = HotspotHelper()
 
         self.sm.add_widget(self.discovery_screen)
         self.sm.add_widget(self.control_screen)
@@ -1531,6 +1541,7 @@ class LazyBoyApp(App):
         self.sm.add_widget(self.bridge_screen)
         self.sm.add_widget(self.radio_screen)
         self.sm.add_widget(self.booster_screen)
+        self.sm.add_widget(self.hotspot_screen)
 
         self.client = ControlClient()
         self.client.set_frame_callback(self._on_frame)
@@ -1540,12 +1551,16 @@ class LazyBoyApp(App):
         self.client.set_radio_phone_fm_callback(self._on_radio_phone_fm)
         self.client.set_smart_point_callback(self._on_smart_point)
         self.client.set_booster_callback(self._on_booster)
+        self.client.set_hotspot_callback(self._on_hotspot)
 
         self.radio_screen.client = self.client
         self.radio_screen.phone_radio = self.phone_radio
 
         self.booster_screen.client = self.client
         self.booster_screen.booster = self.android_booster
+
+        self.hotspot_screen.client = self.client
+        self.hotspot_helper.set_client(self.client)
 
         self._smart_point_on = True
         self._smart_scan_event = None
@@ -1601,6 +1616,17 @@ class LazyBoyApp(App):
         if self.manager and hasattr(self.manager, "get_screen"):
             bs = self.manager.get_screen("booster")
             bs.on_booster_result(data)
+
+    def _open_hotspot(self, *args):
+        if self.manager and hasattr(self.manager, "get_screen"):
+            hs = self.manager.get_screen("hotspot")
+            hs.client = self.client
+            self.manager.current = "hotspot"
+
+    def _on_hotspot(self, data):
+        if self.manager and hasattr(self.manager, "get_screen"):
+            hs = self.manager.get_screen("hotspot")
+            hs.on_hotspot_result(data)
 
     def _on_radio_status(self, data):
         if self.manager and hasattr(self.manager, "get_screen"):
